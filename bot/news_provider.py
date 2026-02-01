@@ -348,8 +348,10 @@ class NewsAPIClient:
             return self._cache.get("forex", [])
 
         try:
+            import urllib.parse
             query = " OR ".join(self.FOREX_KEYWORDS[:5])  # API limits query length
-            url = f"{self.BASE_URL}/everything?q={query}&language=en&sortBy=publishedAt&pageSize={max_articles}"
+            encoded_query = urllib.parse.quote(query)
+            url = f"{self.BASE_URL}/everything?q={encoded_query}&language=en&sortBy=publishedAt&pageSize={max_articles}"
 
             req = urllib.request.Request(url)
             req.add_header("X-Api-Key", self.api_key)
