@@ -22,10 +22,25 @@ class TrailingStopConfig:
 
 
 @dataclass
+class PartialProfitConfig:
+    enabled: bool = True
+    profit_pct: float = 0.15       # Take partial at 15% profit
+    close_pct: float = 0.80        # Close 80% of position
+    move_sl_to_profit: bool = True # Move SL to lock in profit
+
+
+@dataclass
 class TradeConfig:
     sl_pips: float
     tp_pips: float
     trailing_stop: TrailingStopConfig
+    exit_on_ema_cross: bool = True       # Exit if price closes below EMA(9)
+    exit_on_structure_break: bool = True  # Exit on support/resistance break
+    partial_profit: PartialProfitConfig = None
+
+    def __post_init__(self):
+        if self.partial_profit is None:
+            self.partial_profit = PartialProfitConfig()
 
 
 @dataclass
@@ -117,6 +132,14 @@ class AppConfig:
                 sl_pips=float(raw["trade"]["sl_pips"]),
                 tp_pips=float(raw["trade"]["tp_pips"]),
                 trailing_stop=TrailingStopConfig(**raw["trade"]["trailing_stop"]),
+                exit_on_ema_cross=raw["trade"].get("exit_on_ema_cross", True),
+                exit_on_structure_break=raw["trade"].get("exit_on_structure_break", True),
+                partial_profit=PartialProfitConfig(
+                    enabled=raw["trade"].get("partial_profit", {}).get("enabled", True),
+                    profit_pct=raw["trade"].get("partial_profit", {}).get("profit_pct", 0.15),
+                    close_pct=raw["trade"].get("partial_profit", {}).get("close_pct", 0.80),
+                    move_sl_to_profit=raw["trade"].get("partial_profit", {}).get("move_sl_to_profit", True),
+                ),
             ),
             strategy=strategy_config,
             news_filter=NewsFilterConfig(**raw["news_filter"]),

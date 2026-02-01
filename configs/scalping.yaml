@@ -4,7 +4,7 @@
 
 mode: demo  # Change to 'live' for real trading
 symbol: "EURUSD"
-timeframe: "M1"  # 1-minute for scalping (M1 or M5)
+timeframe: "M3"  # 3-minute for scalping
 magic: 80808080  # Unique magic number for this strategy
 
 # Risk Management - Aggressive settings
@@ -22,6 +22,14 @@ trade:
     enabled: true
     start_pips: 4  # Start trailing after 4 pips profit
     trail_pips: 3  # Trail by 3 pips
+  # Advanced exit rules
+  exit_on_ema_cross: true      # Exit if price closes below EMA(9) for longs
+  exit_on_structure_break: true # Exit on break of support/resistance
+  partial_profit:
+    enabled: true
+    profit_pct: 0.15            # At 15% profit
+    close_pct: 0.80             # Close 80% of position
+    move_sl_to_profit: true     # Move SL to lock in 15% profit
 
 # Strategy Configuration
 strategy:
