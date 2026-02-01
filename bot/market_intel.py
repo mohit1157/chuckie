@@ -261,8 +261,8 @@ class VIXMonitor:
     - 0-15:  Low volatility (risk-on environment)
     - 15-20: Normal
     - 20-25: Elevated (caution, wider spreads)
-    - 25-35: High fear (major risk-off)
-    - 35+:   Panic (avoid scalping)
+    - 25-30: High fear (reduce positions)
+    - 30+:   Very high fear (avoid scalping)
     """
 
     def __init__(self, finnhub_key: str = None):
@@ -308,10 +308,10 @@ class VIXMonitor:
             return "normal", True
         elif vix < 25:
             return "elevated", True  # Trade with caution
-        elif vix < 35:
-            return "high", True  # Still trade but be careful
+        elif vix < 30:
+            return "high", True  # Reduce position size
         else:
-            return "extreme", False  # Major panic, avoid
+            return "very_high", False  # Avoid scalping
 
     def get_risk_sentiment(self) -> str:
         """
@@ -341,11 +341,11 @@ class VIXMonitor:
         if vix < 20:
             return False, 1.0
         elif vix < 25:
-            return True, 0.8   # 80% of normal size
-        elif vix < 35:
-            return True, 0.6   # 60% of normal size
+            return True, 0.75  # 75% of normal size
+        elif vix < 30:
+            return True, 0.5   # 50% of normal size
         else:
-            return True, 0.3   # 30% - very small positions only
+            return True, 0.0   # Don't trade
 
 
 class ForexVolatilityMonitor:
@@ -690,9 +690,9 @@ class MarketIntelligence:
         if not can_trade_vol:
             return False, vol_reason
 
-        # Check VIX only for extreme panic (> 35)
-        if context.vix_value > 35:
-            return False, f"Market panic (VIX={context.vix_value:.1f}) - avoid all trading"
+        # Check VIX for high fear (> 30)
+        if context.vix_value > 30:
+            return False, f"High market fear (VIX={context.vix_value:.1f}) - avoid scalping"
 
         # Check if pair is in avoid list
         if symbol in context.avoid_pairs:

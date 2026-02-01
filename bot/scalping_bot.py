@@ -117,10 +117,10 @@ class ScalpingBot:
             if not can_trade:
                 return False, f"forex_volatility: {reason}"
 
-            # Also check for extreme market panic
+            # Also check for high market fear
             context = self.market_intel.get_market_context()
-            if context.vix_value > 35:
-                return False, f"market_panic (VIX={context.vix_value:.1f})"
+            if context.vix_value > 30:
+                return False, f"high_vix ({context.vix_value:.1f})"
 
         # 5. Max trades per day (prevent overtrading)
         max_trades_day = 10
