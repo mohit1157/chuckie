@@ -24,6 +24,7 @@ from .news import NewsFilter
 from .risk import RiskManager
 from .trade_logger import TradeLogger
 from .session_filter import SessionFilter, get_session_info
+from .market_intel import MarketIntelligence
 import logging
 
 LOG = logging.getLogger("bot.scalping_main")
@@ -53,6 +54,7 @@ class ScalpingBot:
         self.logger = TradeLogger(db_path="scalping_trades.db")
         self.news_filter = NewsFilter(cfg)
         self.session_filter = SessionFilter()
+        self.market_intel = None  # Initialized after MT5 connection
 
         # Choose strategy based on config
         if cfg.strategy.min_confirmations >= 6:
@@ -67,6 +69,7 @@ class ScalpingBot:
         # Stats
         self._trades_today = 0
         self._last_report_hour = -1
+        self._use_market_intel = True  # Can be disabled
 
     def _setup_signal_handlers(self):
         """Setup graceful shutdown handlers."""
@@ -108,7 +111,13 @@ class ScalpingBot:
             if self.news_filter.block_new_entries():
                 return False, "news_blocked"
 
-        # 4. Max trades per day (prevent overtrading)
+        # 4. Market intelligence check (VIX too high = don't trade)
+        if self._use_market_intel and self.market_intel:
+            context = self.market_intel.get_market_context()
+            if context.vix_value > 30:
+                return False, f"vix_too_high ({context.vix_value:.1f})"
+
+        # 5. Max trades per day (prevent overtrading)
         max_trades_day = 10
         if self._trades_today >= max_trades_day:
             return False, f"max_trades_reached ({max_trades_day})"
@@ -134,6 +143,10 @@ class ScalpingBot:
                 LOG.info("Today: %d trades | Win Rate: %.1f%% | Profit: $%.2f",
                          stats.total_trades, stats.win_rate, stats.total_profit)
 
+            # Log market intelligence
+            if self._use_market_intel and self.market_intel:
+                self.market_intel.log_market_report()
+
     def run(self):
         """Main bot loop."""
         load_dotenv()
@@ -149,6 +162,15 @@ class ScalpingBot:
         # Connect to MT5
         self.mt5.connect()
         log_health(self.mt5, self.cfg, "STARTED")
+
+        # Initialize market intelligence (needs MT5 connection)
+        try:
+            self.market_intel = MarketIntelligence(self.mt5)
+            LOG.info("Market intelligence initialized")
+            self.market_intel.log_market_report()
+        except Exception as e:
+            LOG.warning("Market intelligence unavailable: %s", e)
+            self._use_market_intel = False
 
         # Print initial session info
         session_info = get_session_info()
@@ -189,11 +211,29 @@ class ScalpingBot:
                 # Get signal from strategy
                 sig = self.strategy.get_signal()
                 if sig is not None:
+                    # Validate against market intelligence
+                    if self._use_market_intel and self.market_intel:
+                        should_trade, reason = self.market_intel.should_take_trade(
+                            self.cfg.symbol, sig.side
+                        )
+                        if not should_trade:
+                            LOG.info("Signal rejected by market intel: %s", reason)
+                            sig = None
+
+                if sig is not None:
                     # Get dynamic SL/TP if enabled
                     if self.cfg.strategy.use_dynamic_sl_tp:
                         sl_pips, tp_pips = self.strategy.get_dynamic_sl_tp()
                     else:
                         sl_pips, tp_pips = self.cfg.trade.sl_pips, self.cfg.trade.tp_pips
+
+                    # Adjust position size based on volatility
+                    size_multiplier = 1.0
+                    if self._use_market_intel and self.market_intel:
+                        size_multiplier = self.market_intel.get_position_size_multiplier()
+                        if size_multiplier < 1.0:
+                            LOG.info("Position size reduced to %.0f%% due to volatility",
+                                     size_multiplier * 100)
 
                     # Execute trade
                     success = self.execution.execute_signal(sig, sl_pips, tp_pips)
