@@ -97,6 +97,35 @@ class SessionFilter:
         current = self.get_current_session()
         return current in self.allowed_sessions
 
+    def is_market_closed(self) -> tuple:
+        """
+        Check if the forex market is closed (weekend).
+
+        Forex market hours:
+        - Opens: Sunday 5:00 PM EST (22:00 UTC)
+        - Closes: Friday 5:00 PM EST (22:00 UTC)
+
+        Returns:
+            (is_closed: bool, reason: str)
+        """
+        now = datetime.now(timezone.utc)
+        hour = now.hour
+        weekday = now.weekday()  # 0=Monday, 6=Sunday
+
+        # Saturday: Market fully closed
+        if weekday == 5:
+            return True, "Market closed (Saturday)"
+
+        # Sunday before 22:00 UTC (5 PM EST): Market closed
+        if weekday == 6 and hour < 22:
+            return True, "Market closed (Sunday - opens 5 PM EST / 22:00 UTC)"
+
+        # Friday after 22:00 UTC: Market closed
+        if weekday == 4 and hour >= 22:
+            return True, "Market closed (Friday close)"
+
+        return False, ""
+
     def should_avoid_now(self) -> tuple:
         """
         Check if trading should be avoided now.
@@ -104,18 +133,23 @@ class SessionFilter:
         Returns:
             (should_avoid: bool, reason: str)
         """
+        # First check if market is closed (weekend)
+        closed, reason = self.is_market_closed()
+        if closed:
+            return True, reason
+
         now = datetime.now(timezone.utc)
         hour = now.hour
         minute = now.minute
         weekday = now.weekday()
 
-        # Avoid Sunday market open (first 2 hours)
+        # Avoid Sunday market open (first 2 hours after open)
         if weekday == 6 and hour >= 22:
             return True, "Sunday market open - gaps possible"
         if weekday == 0 and hour < 1:
             return True, "Early Monday - low liquidity"
 
-        # Avoid Friday close (last 2 hours)
+        # Avoid Friday close (last 2 hours before close)
         if weekday == 4 and hour >= 20:
             return True, "Friday close - spreads widening"
 

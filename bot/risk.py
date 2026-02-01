@@ -2,6 +2,7 @@ import logging
 from datetime import date
 from .config import AppConfig
 from .mt5_client import MT5Client
+from .session_filter import SessionFilter
 
 LOG = logging.getLogger("bot.risk")
 
@@ -12,6 +13,7 @@ class RiskManager:
         self._day = date.today()
         self._start_balance = self.mt5.account_info().balance
         self._trading_halted_today = False
+        self._session_filter = SessionFilter()
 
     def refresh_daily_circuit_breaker(self) -> None:
         today = date.today()
@@ -31,6 +33,18 @@ class RiskManager:
             LOG.error("Daily loss limit hit. start=%.2f current=%.2f halted=true", self._start_balance, bal)
 
     def can_trade_now(self) -> bool:
+        # Check if market is closed (weekend)
+        closed, reason = self._session_filter.is_market_closed()
+        if closed:
+            LOG.debug("Cannot trade: %s", reason)
+            return False
+
+        # Check if we should avoid trading now (low liquidity, news, etc.)
+        avoid, reason = self._session_filter.should_avoid_now()
+        if avoid:
+            LOG.debug("Avoiding trade: %s", reason)
+            return False
+
         if self._trading_halted_today:
             return False
 
