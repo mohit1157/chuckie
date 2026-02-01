@@ -111,11 +111,16 @@ class ScalpingBot:
             if self.news_filter.block_new_entries():
                 return False, "news_blocked"
 
-        # 4. Market intelligence check (VIX too high = don't trade)
+        # 4. Market intelligence check (forex volatility too high = don't trade)
         if self._use_market_intel and self.market_intel:
+            can_trade, reason = self.market_intel.forex_volatility.should_trade(self.cfg.symbol)
+            if not can_trade:
+                return False, f"forex_volatility: {reason}"
+
+            # Also check for extreme market panic
             context = self.market_intel.get_market_context()
-            if context.vix_value > 30:
-                return False, f"vix_too_high ({context.vix_value:.1f})"
+            if context.vix_value > 35:
+                return False, f"market_panic (VIX={context.vix_value:.1f})"
 
         # 5. Max trades per day (prevent overtrading)
         max_trades_day = 10

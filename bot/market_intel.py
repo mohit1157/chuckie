@@ -248,19 +248,21 @@ class CurrencyStrengthMeter:
 
 class VIXMonitor:
     """
-    Monitor VIX (Volatility Index) for market fear/greed.
+    Monitor VIX (Volatility Index) for market sentiment.
+
+    NOTE: VIX measures S&P 500 volatility, not forex directly.
+    Use ForexVolatilityMonitor for pair-specific volatility.
+
+    VIX correlation with forex:
+    - High VIX = Risk-off = USD/JPY/CHF strengthen
+    - Low VIX = Risk-on = AUD/NZD/EM currencies strengthen
 
     VIX Levels:
-    - 0-12:  Extremely low volatility (complacent)
-    - 12-20: Normal volatility
-    - 20-30: Elevated volatility (caution)
-    - 30+:   High volatility (fear, avoid scalping)
-
-    Trading Logic:
-    - VIX < 20: Normal trading
-    - VIX 20-25: Reduce position size
-    - VIX 25-30: Very selective trades only
-    - VIX > 30: Stop trading, too risky for scalping
+    - 0-15:  Low volatility (risk-on environment)
+    - 15-20: Normal
+    - 20-25: Elevated (caution, wider spreads)
+    - 25-35: High fear (major risk-off)
+    - 35+:   Panic (avoid scalping)
     """
 
     def __init__(self, finnhub_key: str = None):
@@ -300,20 +302,36 @@ class VIXMonitor:
         """
         vix = self.fetch_vix()
 
-        if vix < 12:
-            return "very_low", True
+        if vix < 15:
+            return "low", True
         elif vix < 20:
             return "normal", True
         elif vix < 25:
             return "elevated", True  # Trade with caution
-        elif vix < 30:
-            return "high", False  # Reduce/stop trading
+        elif vix < 35:
+            return "high", True  # Still trade but be careful
         else:
-            return "extreme", False  # Do not trade
+            return "extreme", False  # Major panic, avoid
+
+    def get_risk_sentiment(self) -> str:
+        """
+        Get risk sentiment based on VIX.
+
+        Returns:
+            "risk_on", "neutral", or "risk_off"
+        """
+        vix = self.fetch_vix()
+
+        if vix < 15:
+            return "risk_on"   # Favor AUD, NZD, risk currencies
+        elif vix < 25:
+            return "neutral"
+        else:
+            return "risk_off"  # Favor USD, JPY, CHF
 
     def should_reduce_size(self) -> Tuple[bool, float]:
         """
-        Check if position size should be reduced.
+        Check if position size should be reduced based on VIX.
 
         Returns:
             (should_reduce, multiplier)
@@ -323,11 +341,170 @@ class VIXMonitor:
         if vix < 20:
             return False, 1.0
         elif vix < 25:
-            return True, 0.75  # 75% of normal size
-        elif vix < 30:
-            return True, 0.5   # 50% of normal size
+            return True, 0.8   # 80% of normal size
+        elif vix < 35:
+            return True, 0.6   # 60% of normal size
         else:
-            return True, 0.0   # Don't trade
+            return True, 0.3   # 30% - very small positions only
+
+
+class ForexVolatilityMonitor:
+    """
+    Forex-specific volatility monitor using ATR.
+
+    This is MORE relevant than VIX for forex trading because:
+    1. Measures actual pip movement of the pair
+    2. Adapts to each currency pair's characteristics
+    3. Real-time from MT5 data
+
+    ATR Interpretation for EURUSD (M5 timeframe):
+    - < 3 pips: Very low volatility (tight range)
+    - 3-6 pips: Normal volatility (good for scalping)
+    - 6-10 pips: Elevated volatility (widen SL/TP)
+    - > 10 pips: High volatility (reduce size or skip)
+
+    Note: These thresholds vary by pair and timeframe.
+    """
+
+    # Normal ATR ranges for major pairs (M5 timeframe, in pips)
+    NORMAL_ATR_RANGES = {
+        "EURUSD": (3, 8),
+        "GBPUSD": (4, 10),
+        "USDJPY": (3, 8),
+        "USDCHF": (3, 7),
+        "AUDUSD": (3, 7),
+        "USDCAD": (3, 7),
+        "NZDUSD": (2, 6),
+        "EURGBP": (2, 5),
+        "EURJPY": (4, 10),
+        "GBPJPY": (6, 15),  # Very volatile pair
+    }
+
+    def __init__(self, mt5_client=None):
+        self.mt5 = mt5_client
+        self._atr_cache: Dict[str, Tuple[float, datetime]] = {}
+
+    def get_pair_atr(self, symbol: str, timeframe: str = "M5", period: int = 14) -> float:
+        """
+        Get ATR for a specific pair in pips.
+
+        Returns:
+            ATR value in pips
+        """
+        if self.mt5 is None:
+            return 5.0  # Default normal value
+
+        # Check cache (valid for 5 minutes)
+        cache_key = f"{symbol}_{timeframe}"
+        if cache_key in self._atr_cache:
+            atr, cached_time = self._atr_cache[cache_key]
+            if (datetime.now(timezone.utc) - cached_time).seconds < 300:
+                return atr
+
+        try:
+            import MetaTrader5 as mt5
+
+            # Map timeframe string to MT5 constant
+            tf_map = {
+                "M1": mt5.TIMEFRAME_M1,
+                "M5": mt5.TIMEFRAME_M5,
+                "M15": mt5.TIMEFRAME_M15,
+                "H1": mt5.TIMEFRAME_H1,
+            }
+            tf = tf_map.get(timeframe, mt5.TIMEFRAME_M5)
+
+            rates = self.mt5.copy_rates_from_pos(symbol, tf, 0, period + 10)
+            if rates is None or len(rates) < period:
+                return 5.0
+
+            # Calculate ATR
+            import numpy as np
+            high = np.array([r["high"] for r in rates], dtype=float)
+            low = np.array([r["low"] for r in rates], dtype=float)
+            close = np.array([r["close"] for r in rates], dtype=float)
+
+            tr = np.zeros(len(close))
+            tr[0] = high[0] - low[0]
+            for i in range(1, len(close)):
+                hl = high[i] - low[i]
+                hc = abs(high[i] - close[i-1])
+                lc = abs(low[i] - close[i-1])
+                tr[i] = max(hl, hc, lc)
+
+            atr = np.mean(tr[-period:])
+
+            # Convert to pips
+            info = self.mt5.symbol_info(symbol)
+            if info:
+                pip_value = info.point * 10  # 5-digit broker
+                atr_pips = atr / pip_value
+            else:
+                atr_pips = atr * 10000  # Assume 4-digit
+
+            # Cache result
+            self._atr_cache[cache_key] = (atr_pips, datetime.now(timezone.utc))
+
+            return atr_pips
+
+        except Exception as e:
+            LOG.warning("Failed to calculate ATR for %s: %s", symbol, e)
+            return 5.0
+
+    def get_volatility_state(self, symbol: str) -> Tuple[str, float]:
+        """
+        Get volatility state for a pair.
+
+        Returns:
+            (state, atr_pips)
+            state: "low", "normal", "elevated", "high"
+        """
+        atr = self.get_pair_atr(symbol)
+
+        # Get normal range for this pair
+        normal_range = self.NORMAL_ATR_RANGES.get(symbol, (3, 8))
+        low_threshold, high_threshold = normal_range
+
+        if atr < low_threshold * 0.7:
+            return "low", atr
+        elif atr < high_threshold:
+            return "normal", atr
+        elif atr < high_threshold * 1.5:
+            return "elevated", atr
+        else:
+            return "high", atr
+
+    def should_trade(self, symbol: str) -> Tuple[bool, str]:
+        """
+        Check if volatility is suitable for scalping.
+
+        Returns:
+            (should_trade, reason)
+        """
+        state, atr = self.get_volatility_state(symbol)
+
+        if state == "low":
+            return True, f"Low volatility ({atr:.1f} pips) - tight scalps OK"
+        elif state == "normal":
+            return True, f"Normal volatility ({atr:.1f} pips) - ideal for scalping"
+        elif state == "elevated":
+            return True, f"Elevated volatility ({atr:.1f} pips) - widen SL/TP"
+        else:
+            return False, f"High volatility ({atr:.1f} pips) - skip scalping"
+
+    def get_recommended_sl_tp(self, symbol: str) -> Tuple[float, float]:
+        """
+        Get recommended SL/TP based on current volatility.
+
+        Returns:
+            (sl_pips, tp_pips)
+        """
+        atr = self.get_pair_atr(symbol)
+
+        # SL = 1.5 * ATR, TP = 1.0 * ATR (for high win rate)
+        sl_pips = max(5, min(15, atr * 1.5))
+        tp_pips = max(3, min(10, atr * 1.0))
+
+        return sl_pips, tp_pips
 
 
 class DollarIndexTracker:
@@ -403,6 +580,10 @@ class MarketIntelligence:
     3. Pair selection (which pair has best setup?)
     4. Position sizing (full size or reduced?)
 
+    Volatility monitoring:
+    - VIX: General market fear (affects risk sentiment)
+    - Forex ATR: Pair-specific volatility (more important for forex)
+
     Usage:
         intel = MarketIntelligence(mt5_client)
 
@@ -424,6 +605,7 @@ class MarketIntelligence:
         self.mt5 = mt5_client
         self.currency_strength = CurrencyStrengthMeter(mt5_client)
         self.vix_monitor = VIXMonitor(finnhub_key)
+        self.forex_volatility = ForexVolatilityMonitor(mt5_client)
         self.dxy_tracker = DollarIndexTracker(mt5_client)
         self._context: Optional[MarketContext] = None
         self._last_update: Optional[datetime] = None
@@ -503,9 +685,14 @@ class MarketIntelligence:
         """
         context = self.get_market_context()
 
-        # Check volatility
-        if context.vix_value > 30:
-            return False, f"VIX too high ({context.vix_value:.1f}) - avoid scalping"
+        # Check FOREX volatility first (more relevant than VIX)
+        can_trade_vol, vol_reason = self.forex_volatility.should_trade(symbol)
+        if not can_trade_vol:
+            return False, vol_reason
+
+        # Check VIX only for extreme panic (> 35)
+        if context.vix_value > 35:
+            return False, f"Market panic (VIX={context.vix_value:.1f}) - avoid all trading"
 
         # Check if pair is in avoid list
         if symbol in context.avoid_pairs:
@@ -529,6 +716,15 @@ class MarketIntelligence:
                     return False, f"Currency strength disagrees: {quote} weaker than {base}"
 
         return True, "Trade aligns with market context"
+
+    def get_recommended_sl_tp(self, symbol: str) -> Tuple[float, float]:
+        """
+        Get ATR-based SL/TP recommendations.
+
+        Returns:
+            (sl_pips, tp_pips)
+        """
+        return self.forex_volatility.get_recommended_sl_tp(symbol)
 
     def get_position_size_multiplier(self) -> float:
         """Get position size multiplier based on volatility."""
