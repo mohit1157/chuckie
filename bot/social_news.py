@@ -49,10 +49,15 @@ class TwitterClient:
 
     BASE_URL = "https://api.twitter.com/2"
 
-    # Key accounts for forex/market news
+    # Key accounts for forex/market news (limited to save API quota)
+    # Free tier: 500 posts/month = ~16/day = ~1 fetch per 90 min
     MONITORED_ACCOUNTS = {
         "DeItaone": "Walter Bloomberg - Breaking news",
         "FirstSquawk": "Breaking market news",
+    }
+
+    # Extended accounts (only used if quota allows)
+    EXTENDED_ACCOUNTS = {
         "LiveSquawk": "Real-time updates",
         "zaborhedge": "Hedge fund news",
         "ForexLive": "Forex specific news",
@@ -95,11 +100,18 @@ class TwitterClient:
         "crisis", "sell", "short", "lower", "bottom", "cut",
     ]
 
+    # Rate limiting: 500 posts/month = ~16/day
+    # With 2 accounts, that's 8 fetches/day = 1 fetch every 3 hours
+    CACHE_DURATION_SECONDS = 3 * 60 * 60  # 3 hours
+    MAX_DAILY_REQUESTS = 8  # Conservative limit
+
     def __init__(self, bearer_token: str = None):
         self.bearer_token = bearer_token or os.getenv("TWITTER_BEARER_TOKEN")
         self._cache: List[SocialPost] = []
         self._cache_time: Optional[datetime] = None
         self._user_ids: Dict[str, str] = {}  # username -> user_id
+        self._daily_requests = 0
+        self._request_date: Optional[datetime] = None
 
     def _make_request(self, endpoint: str) -> Optional[dict]:
         """Make authenticated request to Twitter API."""
@@ -205,17 +217,42 @@ class TwitterClient:
 
         return posts
 
-    def fetch_all_monitored(self) -> List[SocialPost]:
-        """Fetch recent tweets from all monitored accounts."""
-        # Check cache (refresh every 2 minutes)
+    def _check_rate_limit(self) -> bool:
+        """Check if we can make more API requests today."""
         now = datetime.now(timezone.utc)
-        if self._cache_time and (now - self._cache_time).seconds < 120:
+
+        # Reset daily counter at midnight UTC
+        if self._request_date is None or self._request_date.date() != now.date():
+            self._daily_requests = 0
+            self._request_date = now
+
+        if self._daily_requests >= self.MAX_DAILY_REQUESTS:
+            LOG.debug("Twitter daily limit reached (%d/%d)",
+                     self._daily_requests, self.MAX_DAILY_REQUESTS)
+            return False
+
+        return True
+
+    def fetch_all_monitored(self) -> List[SocialPost]:
+        """Fetch recent tweets from monitored accounts (rate-limited)."""
+        now = datetime.now(timezone.utc)
+
+        # Check cache (3 hour refresh to conserve API quota)
+        if self._cache_time and (now - self._cache_time).total_seconds() < self.CACHE_DURATION_SECONDS:
+            LOG.debug("Using cached Twitter data (age: %.0f min)",
+                     (now - self._cache_time).total_seconds() / 60)
+            return self._cache
+
+        # Check rate limit
+        if not self._check_rate_limit():
+            LOG.warning("Twitter API quota exhausted for today, using stale cache")
             return self._cache
 
         all_posts = []
         for username in self.MONITORED_ACCOUNTS.keys():
             posts = self.fetch_recent_tweets(username, max_results=5)
             all_posts.extend(posts)
+            self._daily_requests += 1
 
         # Sort by timestamp
         all_posts.sort(key=lambda x: x.timestamp, reverse=True)
@@ -223,7 +260,9 @@ class TwitterClient:
         self._cache = all_posts
         self._cache_time = now
 
-        LOG.info("Fetched %d tweets from monitored accounts", len(all_posts))
+        LOG.info("Fetched %d tweets from %d accounts (daily: %d/%d)",
+                len(all_posts), len(self.MONITORED_ACCOUNTS),
+                self._daily_requests, self.MAX_DAILY_REQUESTS)
         return all_posts
 
     def get_breaking_news(self, minutes: int = 15) -> List[SocialPost]:
