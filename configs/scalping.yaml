@@ -45,11 +45,12 @@ session:
   avoid_news_times: true  # Skip trading at :00 and :30 marks
 
 # News Filter
+# Providers: "stub" (testing), "calendar" (economic events), "full" (all sources)
 news_filter:
   enabled: true
   minutes_before: 30  # No trading 30 min before high-impact news
   minutes_after: 15   # Wait 15 min after news
-  provider: "stub"    # Change to real provider when available
+  provider: "full"    # Use "stub" for testing without API keys
 
 # Logging
 logging:
