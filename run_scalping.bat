@@ -1,0 +1,24 @@
+@echo off
+echo ========================================
+echo   High-Probability Scalping Bot
+echo   Targeting 80%+ Win Rate
+echo ========================================
+echo.
+
+REM Check if config argument provided
+if "%1"=="" (
+    echo Using default config: configs/scalping.yaml
+    set CONFIG=configs/scalping.yaml
+) else (
+    set CONFIG=%1
+)
+
+echo Config: %CONFIG%
+echo.
+echo Starting bot...
+echo Press Ctrl+C to stop
+echo.
+
+python -m bot.scalping_bot --config %CONFIG%
+
+pause

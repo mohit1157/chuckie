@@ -1,0 +1,56 @@
+# High-Probability Scalping Configuration
+# Targeting 80%+ win rate for day trading
+# Optimized for EUR/USD on M1-M5 timeframes
+
+mode: demo  # Change to 'live' for real trading
+symbol: "EURUSD"
+timeframe: "M1"  # 1-minute for scalping (M1 or M5)
+magic: 80808080  # Unique magic number for this strategy
+
+# Risk Management - Conservative for scalping
+risk:
+  account_risk_per_trade: 0.003  # 0.3% per trade (smaller for scalping)
+  max_spread_points: 15  # Max 1.5 pips spread (tight for scalping)
+  max_open_positions: 1  # Only 1 position at a time
+  max_daily_loss_pct: 0.02  # Stop after 2% daily loss
+
+# Trade Parameters - Asymmetric R:R for high win rate
+trade:
+  sl_pips: 10  # Fallback SL (dynamic is preferred)
+  tp_pips: 6   # Fallback TP (smaller TP = higher win rate)
+  trailing_stop:
+    enabled: true
+    start_pips: 4  # Start trailing after 4 pips profit
+    trail_pips: 3  # Trail by 3 pips
+
+# Strategy Configuration
+strategy:
+  name: "high_probability_scalping"
+  fast_ema: 9   # Fast EMA for trend
+  slow_ema: 21  # Slow EMA for trend confirmation
+  breakout_lookback: 10  # Not used in scalping strategy
+
+  # Scalping-specific settings
+  min_confirmations: 5  # Require 5/7 confirmations (use 6 for 85%+ win rate)
+  use_dynamic_sl_tp: true  # Use ATR-based SL/TP
+  atr_sl_multiplier: 1.5  # SL = 1.5 * ATR
+  atr_tp_multiplier: 1.0  # TP = 1.0 * ATR (asymmetric for higher win rate)
+  cooldown_minutes: 3  # Wait 3 min between trades
+
+# Session Filter - Trade during high liquidity
+session:
+  enabled: true
+  london_only: false  # Allow NY session too
+  overlap_only: false  # Set true for only London/NY overlap (best liquidity)
+  avoid_news_times: true  # Skip trading at :00 and :30 marks
+
+# News Filter
+news_filter:
+  enabled: true
+  minutes_before: 30  # No trading 30 min before high-impact news
+  minutes_after: 15   # Wait 15 min after news
+  provider: "stub"    # Change to real provider when available
+
+# Logging
+logging:
+  level: "INFO"  # Use DEBUG for more details

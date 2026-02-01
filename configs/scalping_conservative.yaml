@@ -1,0 +1,52 @@
+# Ultra-Conservative Scalping Configuration
+# Targeting 85%+ win rate - fewer trades, higher accuracy
+# Only trades during London/NY overlap with 6+ confirmations
+
+mode: demo
+symbol: "EURUSD"
+timeframe: "M1"
+magic: 85858585
+
+# Ultra-Conservative Risk
+risk:
+  account_risk_per_trade: 0.002  # 0.2% per trade (very small)
+  max_spread_points: 12  # Max 1.2 pips (only best conditions)
+  max_open_positions: 1
+  max_daily_loss_pct: 0.015  # Stop after 1.5% daily loss
+
+# Trade Parameters
+trade:
+  sl_pips: 8
+  tp_pips: 5  # Tighter TP for higher win rate
+  trailing_stop:
+    enabled: true
+    start_pips: 3
+    trail_pips: 2
+
+# Strategy - Higher confirmation threshold
+strategy:
+  name: "conservative_scalping"
+  fast_ema: 9
+  slow_ema: 21
+  breakout_lookback: 10
+  min_confirmations: 6  # Require 6/7 confirmations for 85%+ win rate
+  use_dynamic_sl_tp: true
+  atr_sl_multiplier: 1.2
+  atr_tp_multiplier: 0.8
+  cooldown_minutes: 5  # Longer cooldown
+
+# Session - ONLY London/NY overlap (best conditions)
+session:
+  enabled: true
+  london_only: false
+  overlap_only: true  # Only 12:00-16:00 UTC
+  avoid_news_times: true
+
+news_filter:
+  enabled: true
+  minutes_before: 45
+  minutes_after: 30
+  provider: "stub"
+
+logging:
+  level: "INFO"
