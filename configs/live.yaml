@@ -1,0 +1,28 @@
+mode: live
+symbol: "EURUSD"
+timeframe: "M5"
+magic: 20260131
+risk:
+  account_risk_per_trade: 0.0025
+  max_spread_points: 25
+  max_open_positions: 1
+  max_daily_loss_pct: 0.01
+trade:
+  sl_pips: 12
+  tp_pips: 18
+  trailing_stop:
+    enabled: true
+    start_pips: 10
+    trail_pips: 8
+strategy:
+  name: "trend_breakout_v1"
+  fast_ema: 20
+  slow_ema: 50
+  breakout_lookback: 20
+news_filter:
+  enabled: true
+  minutes_before: 15
+  minutes_after: 15
+  provider: "stub"
+logging:
+  level: "INFO"
