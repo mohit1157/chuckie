@@ -7,12 +7,12 @@ symbol: "EURUSD"
 timeframe: "M1"
 magic: 85858585
 
-# Ultra-Conservative Risk
+# Risk Settings
 risk:
-  account_risk_per_trade: 0.002  # 0.2% per trade (very small)
+  account_risk_per_trade: 0.15  # 15% per trade (HIGH RISK!)
   max_spread_points: 12  # Max 1.2 pips (only best conditions)
   max_open_positions: 1
-  max_daily_loss_pct: 0.015  # Stop after 1.5% daily loss
+  max_daily_loss_pct: 0.07  # Stop after 7% daily loss
 
 # Trade Parameters
 trade:

@@ -7,12 +7,12 @@ symbol: "EURUSD"
 timeframe: "M1"  # 1-minute for scalping (M1 or M5)
 magic: 80808080  # Unique magic number for this strategy
 
-# Risk Management - Conservative for scalping
+# Risk Management - Aggressive settings
 risk:
-  account_risk_per_trade: 0.003  # 0.3% per trade (smaller for scalping)
+  account_risk_per_trade: 0.15  # 15% per trade (HIGH RISK!)
   max_spread_points: 15  # Max 1.5 pips spread (tight for scalping)
   max_open_positions: 1  # Only 1 position at a time
-  max_daily_loss_pct: 0.02  # Stop after 2% daily loss
+  max_daily_loss_pct: 0.07  # Stop after 7% daily loss
 
 # Trade Parameters - Asymmetric R:R for high win rate
 trade:
