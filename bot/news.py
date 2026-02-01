@@ -4,11 +4,11 @@ News Filter - Blocks trading during high-impact events.
 Integrates with:
 1. Economic Calendar (NFP, FOMC, ECB, etc.)
 2. NewsAPI.org for financial news sentiment
-3. Reddit sentiment (r/Forex, r/forextrading)
-4. Twitter/X (@DeItaone, @FirstSquawk, etc.)
-5. Truth Social (@realDonaldTrump)
+3. FREE RSS Feeds (ForexLive, FXStreet, DailyFX, Investing.com)
+4. Reddit sentiment (r/Forex, r/forextrading) - optional
+5. Twitter/X - optional (requires paid API)
 
-Configure API keys in .env file.
+Configure API keys in .env file (optional - RSS feeds work without keys).
 """
 import os
 import logging
@@ -25,19 +25,22 @@ class NewsFilter:
     Providers:
     - "stub": Never blocks (default, for testing)
     - "calendar": Economic calendar only
-    - "full": Calendar + news sentiment + Reddit + Twitter + Truth Social
+    - "full": Calendar + news sentiment + RSS feeds + optional APIs
 
-    API Keys (set in .env):
-    - NEWSAPI_KEY: From https://newsapi.org
-    - REDDIT_CLIENT_ID: From https://reddit.com/prefs/apps
-    - REDDIT_CLIENT_SECRET: From Reddit app settings
-    - TWITTER_BEARER_TOKEN: From https://developer.twitter.com
+    Free sources (no API key needed):
+    - RSS feeds from ForexLive, FXStreet, DailyFX, Investing.com
+
+    Optional API Keys (set in .env):
+    - NEWSAPI_KEY: From https://newsapi.org (100 req/day free)
+    - REDDIT_CLIENT_ID/SECRET: From reddit.com/prefs/apps
+    - TWITTER_BEARER_TOKEN: From developer.twitter.com (paid only)
     """
 
     def __init__(self, cfg: AppConfig):
         self.cfg = cfg
         self._provider = None
         self._social_news = None
+        self._free_news = None  # Free RSS feeds
         self._init_provider()
 
     def _init_provider(self):
@@ -65,14 +68,26 @@ class NewsFilter:
         except Exception as e:
             LOG.warning("Failed to initialize news provider: %s", e)
 
-        # Initialize social news (Twitter, Truth Social)
+        # Initialize FREE RSS news feeds (no API key needed)
+        try:
+            from .free_news_feeds import FreeNewsFetcher
+
+            self._free_news = FreeNewsFetcher()
+            LOG.info("Free RSS news: ForexLive, FXStreet, DailyFX, Investing.com")
+
+        except ImportError as e:
+            LOG.warning("Failed to import free news feeds: %s", e)
+        except Exception as e:
+            LOG.warning("Failed to initialize free news feeds: %s", e)
+
+        # Initialize social news (Twitter, Truth Social) - optional, may fail on free tier
         try:
             from .social_news import SocialNewsAggregator
 
             self._social_news = SocialNewsAggregator(
                 twitter_token=os.getenv("TWITTER_BEARER_TOKEN"),
             )
-            LOG.info("Social news: Twitter/X and Truth Social initialized")
+            LOG.info("Social news: Twitter/X initialized (may require paid API)")
 
         except ImportError as e:
             LOG.warning("Failed to import social news: %s", e)
@@ -122,11 +137,27 @@ class NewsFilter:
             "news_sentiment": 0,
             "reddit_sentiment": 0,
             "social_sentiment": 0,
+            "rss_sentiment": 0,  # Free RSS feeds
             "overall_sentiment": 0,
             "recommendation": "neutral",
         }
 
-        # Get news provider sentiment
+        # Get FREE RSS news sentiment (primary source - no API limits)
+        if self._free_news is not None:
+            try:
+                rss_data = self._free_news.get_sentiment_for_pair(self.cfg.symbol)
+                if rss_data:
+                    bias = rss_data.get("overall_bias", "neutral")
+                    if bias == "bullish":
+                        result["rss_sentiment"] = 0.5
+                    elif bias == "bearish":
+                        result["rss_sentiment"] = -0.5
+                    LOG.debug("RSS sentiment for %s: %s (%d articles)",
+                             self.cfg.symbol, bias, rss_data.get("news_count", 0))
+            except Exception as e:
+                LOG.warning("Error getting RSS sentiment: %s", e)
+
+        # Get news provider sentiment (NewsAPI - may have limits)
         if self._provider is not None:
             try:
                 provider_sentiment = self._provider.get_market_sentiment(self.cfg.symbol)
@@ -136,12 +167,11 @@ class NewsFilter:
             except Exception as e:
                 LOG.warning("Error getting provider sentiment: %s", e)
 
-        # Get social media sentiment
+        # Get social media sentiment (Twitter - may fail on free tier)
         if self._social_news is not None:
             try:
                 social = self._social_news.get_sentiment_for_pair(self.cfg.symbol)
                 if social:
-                    # Convert overall_bias to numeric
                     bias = social.get("overall_bias", "neutral")
                     if bias == "bullish":
                         result["social_sentiment"] = 0.5
@@ -150,13 +180,21 @@ class NewsFilter:
                     else:
                         result["social_sentiment"] = 0
             except Exception as e:
-                LOG.warning("Error getting social sentiment: %s", e)
+                LOG.debug("Social sentiment unavailable: %s", e)
 
-        # Calculate overall sentiment
-        sentiments = [result["news_sentiment"], result["reddit_sentiment"], result["social_sentiment"]]
-        non_zero = [s for s in sentiments if s != 0]
-        if non_zero:
-            result["overall_sentiment"] = sum(non_zero) / len(non_zero)
+        # Calculate overall sentiment (weight RSS higher since it's always available)
+        sentiments = []
+        if result["rss_sentiment"] != 0:
+            sentiments.append(result["rss_sentiment"] * 1.5)  # Weight RSS higher
+        if result["news_sentiment"] != 0:
+            sentiments.append(result["news_sentiment"])
+        if result["reddit_sentiment"] != 0:
+            sentiments.append(result["reddit_sentiment"])
+        if result["social_sentiment"] != 0:
+            sentiments.append(result["social_sentiment"])
+
+        if sentiments:
+            result["overall_sentiment"] = sum(sentiments) / len(sentiments)
 
         # Determine recommendation
         overall = result["overall_sentiment"]
@@ -198,9 +236,16 @@ class NewsFilter:
 
     def log_status(self):
         """Log current news/sentiment status."""
-        if self._provider is None and self._social_news is None:
+        if self._provider is None and self._social_news is None and self._free_news is None:
             LOG.info("News filter: Disabled or not configured")
             return
+
+        # Log FREE RSS news (primary source)
+        if self._free_news is not None:
+            try:
+                self._free_news.log_news_report(self.cfg.symbol)
+            except Exception as e:
+                LOG.warning("Error logging RSS news: %s", e)
 
         # Log news provider sentiment
         if self._provider is not None:
@@ -209,9 +254,9 @@ class NewsFilter:
             except Exception as e:
                 LOG.warning("Error logging provider sentiment: %s", e)
 
-        # Log social media sentiment
+        # Log social media sentiment (may fail on free Twitter tier)
         if self._social_news is not None:
             try:
                 self._social_news.log_social_report(self.cfg.symbol)
             except Exception as e:
-                LOG.warning("Error logging social sentiment: %s", e)
+                LOG.debug("Social report unavailable: %s", e)
