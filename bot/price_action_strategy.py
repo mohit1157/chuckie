@@ -504,6 +504,7 @@ class PriceActionStrategy:
         # FIX 1: MOMENTUM ENTRY - Trade strong trends without S/R
         # ============================================================
         # If no S/R signal, check for momentum entry
+        # FIX 6: Don't momentum BUY at resistance, don't momentum SELL at support
         if signal is None and self.momentum_entry_enabled:
             signal = self._check_momentum_entry(
                 trend=trend,
@@ -513,7 +514,9 @@ class PriceActionStrategy:
                 current_close=current_close,
                 pip_value=pip_value,
                 highs=highs,
-                lows=lows
+                lows=lows,
+                at_support=at_support,
+                at_resistance=at_resistance
             )
 
         # ============================================================
@@ -939,7 +942,8 @@ class PriceActionStrategy:
 
     def _check_momentum_entry(self, trend: str, momentum: str, pattern_bias: Optional[str],
                                pattern_confidence: float, current_close: float, pip_value: float,
-                               highs: np.ndarray, lows: np.ndarray) -> Optional[Signal]:
+                               highs: np.ndarray, lows: np.ndarray,
+                               at_support: bool = False, at_resistance: bool = False) -> Optional[Signal]:
         """
         FIX 1: Momentum Entry - Enter strong trends without requiring S/R level.
 
@@ -951,17 +955,21 @@ class PriceActionStrategy:
 
         A good trader sees "everything is bearish" and sells, without waiting for
         price to touch a specific level.
+
+        FIX 6: Don't BUY at resistance, don't SELL at support - these are reversal zones!
         """
         # Check if we have strong enough currency bias
         if self._bias_strength < self.momentum_min_bias_strength:
             return None
 
         # SELL momentum entry
+        # FIX 6: Block SELL at support (support is where price bounces UP)
         if (trend in ["strong_downtrend", "downtrend"] and
             self._currency_bias == "SELL" and
             momentum == "bearish" and
             pattern_bias == "SELL" and
-            pattern_confidence >= self.momentum_min_pattern_confidence):
+            pattern_confidence >= self.momentum_min_pattern_confidence and
+            not at_support):  # FIX 6: Don't sell at support!
 
             # Calculate ATR-based stops (use recent volatility)
             atr = self._calculate_atr(highs, lows, period=14)
@@ -992,11 +1000,13 @@ class PriceActionStrategy:
             )
 
         # BUY momentum entry
+        # FIX 6: Block BUY at resistance (resistance is where price bounces DOWN)
         elif (trend in ["strong_uptrend", "uptrend"] and
               self._currency_bias == "BUY" and
               momentum == "bullish" and
               pattern_bias == "BUY" and
-              pattern_confidence >= self.momentum_min_pattern_confidence):
+              pattern_confidence >= self.momentum_min_pattern_confidence and
+              not at_resistance):  # FIX 6: Don't buy at resistance!
 
             # Calculate ATR-based stops
             atr = self._calculate_atr(highs, lows, period=14)
@@ -1025,6 +1035,12 @@ class PriceActionStrategy:
                 trade_type="momentum",
                 size_multiplier=self.momentum_size_multiplier
             )
+
+        # FIX 6: Log when momentum entry is blocked due to S/R level
+        if at_resistance and self._currency_bias == "BUY" and trend in ["strong_uptrend", "uptrend"]:
+            LOG.warning("MOMENTUM BUY BLOCKED: Price at resistance - waiting for breakout or pullback")
+        if at_support and self._currency_bias == "SELL" and trend in ["strong_downtrend", "downtrend"]:
+            LOG.warning("MOMENTUM SELL BLOCKED: Price at support - waiting for breakdown or pullback")
 
         return None
 

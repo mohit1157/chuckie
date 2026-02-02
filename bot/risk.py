@@ -1,5 +1,6 @@
 import logging
-from datetime import date
+import time
+from datetime import date, datetime
 from .config import AppConfig
 from .mt5_client import MT5Client
 from .session_filter import SessionFilter
@@ -15,6 +16,11 @@ class RiskManager:
         self._trading_halted_today = False
         self._session_filter = SessionFilter()
         self._last_max_pos_log = 0  # Throttle max positions logging
+
+        # FIX 7: Cooldown after position closes to prevent immediate re-entry
+        self._cooldown_until: float = 0  # Unix timestamp
+        self._cooldown_minutes = 3  # Wait 3 minutes after any position closes
+        self._last_position_count = 0  # Track position changes
 
     def refresh_daily_circuit_breaker(self) -> None:
         today = date.today()
@@ -65,12 +71,29 @@ class RiskManager:
             return False
 
         positions = self.mt5.positions_get(symbol=self.cfg.symbol)
+        current_position_count = len(positions) if positions else 0
+
+        # FIX 7: Detect when a position closes and trigger cooldown
+        if current_position_count < self._last_position_count:
+            # Position was closed! Start cooldown
+            self._cooldown_until = time.time() + (self._cooldown_minutes * 60)
+            LOG.warning("Position closed! Starting %d minute cooldown before next trade",
+                       self._cooldown_minutes)
+        self._last_position_count = current_position_count
+
+        # FIX 7: Check if we're in cooldown
+        now = time.time()
+        if now < self._cooldown_until:
+            remaining = int(self._cooldown_until - now)
+            if remaining % 30 == 0 or remaining <= 5:  # Log every 30 sec or last 5 sec
+                LOG.info("Risk blocked: cooldown after close (%d seconds remaining)", remaining)
+            return False
+
         if positions and len(positions) >= self.cfg.risk.max_open_positions:
-            import time
-            now = int(time.time())
-            if now - self._last_max_pos_log >= 60:  # Log only once per minute
+            now_int = int(time.time())
+            if now_int - self._last_max_pos_log >= 60:  # Log only once per minute
                 LOG.info("Risk blocked: max positions reached (%d/%d)", len(positions), self.cfg.risk.max_open_positions)
-                self._last_max_pos_log = now
+                self._last_max_pos_log = now_int
             return False
 
         return True
