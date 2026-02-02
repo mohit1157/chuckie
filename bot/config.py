@@ -12,6 +12,7 @@ class RiskConfig:
     max_spread_points: int
     max_open_positions: int
     max_daily_loss_pct: float
+    max_lot_size: float = 3.0
 
 
 @dataclass
@@ -55,7 +56,18 @@ class StrategyConfig:
     use_dynamic_sl_tp: bool = True
     atr_sl_multiplier: float = 1.5
     atr_tp_multiplier: float = 1.0
+    atr_tp_multiplier: float = 1.0
     cooldown_minutes: int = 3
+    strong_rejection_enabled: bool = False
+    
+    # High Precision Mode (85% Win Rate Goal)
+    high_precision_mode: bool = True
+    min_adx: float = 20.0
+    max_rsi_buy: float = 70.0
+    min_rsi_buy: float = 40.0
+    max_rsi_sell: float = 60.0
+    min_rsi_sell: float = 30.0
+    max_spread_pips: float = 1.5
 
 
 @dataclass
@@ -112,6 +124,14 @@ class AppConfig:
             atr_sl_multiplier=strategy_raw.get("atr_sl_multiplier", 1.5),
             atr_tp_multiplier=strategy_raw.get("atr_tp_multiplier", 1.0),
             cooldown_minutes=strategy_raw.get("cooldown_minutes", 3),
+            strong_rejection_enabled=strategy_raw.get("strong_rejection_enabled", False),
+            high_precision_mode=strategy_raw.get("high_precision_mode", True),
+            min_adx=strategy_raw.get("min_adx", 20.0),
+            max_rsi_buy=strategy_raw.get("max_rsi_buy", 70.0),
+            min_rsi_buy=strategy_raw.get("min_rsi_buy", 40.0),
+            max_rsi_sell=strategy_raw.get("max_rsi_sell", 60.0),
+            min_rsi_sell=strategy_raw.get("min_rsi_sell", 30.0),
+            max_spread_pips=strategy_raw.get("max_spread_pips", 1.5),
         )
 
         # Build session config if present
@@ -128,7 +148,13 @@ class AppConfig:
             symbol=raw["symbol"],
             timeframe=raw["timeframe"],
             magic=int(raw["magic"]),
-            risk=RiskConfig(**raw["risk"]),
+            risk=RiskConfig(
+                account_risk_per_trade=raw["risk"]["account_risk_per_trade"],
+                max_spread_points=raw["risk"]["max_spread_points"],
+                max_open_positions=raw["risk"]["max_open_positions"],
+                max_daily_loss_pct=raw["risk"]["max_daily_loss_pct"],
+                max_lot_size=raw["risk"].get("max_lot_size", 3.0),
+            ),
             trade=TradeConfig(
                 sl_pips=float(raw["trade"]["sl_pips"]),
                 tp_pips=float(raw["trade"]["tp_pips"]),

@@ -21,6 +21,7 @@ from .mt5_client import MT5Client
 from .data import get_recent_bars
 from .pattern_recognition import PatternRecognition, DetectedPattern
 from .level_memory import LevelMemory
+from .indicators import calculate_all_indicators, IndicatorValues
 
 LOG = logging.getLogger("bot.price_action")
 
@@ -102,7 +103,7 @@ class PriceActionStrategy:
         self.ma_touch_size_multiplier = 0.8  # 80% size for MA touch trades
 
         # Strong Rejection Entry parameters (Fix 3)
-        self.strong_rejection_enabled = True
+        self.strong_rejection_enabled = getattr(cfg.strategy, 'strong_rejection_enabled', False)
         self.strong_rejection_size_multiplier = 0.5  # 50% size for counter-trend rejections
 
         # ============================================================
@@ -563,6 +564,15 @@ class PriceActionStrategy:
             elif allowed_direction == "SELL" and signal.side == "BUY":
                 LOG.warning("SIGNAL BLOCKED: BUY signal rejected - chart is BEARISH (only SELL allowed)")
                 signal = None
+
+        # ============================================================
+        # FIX HIGH PRECISION: Apply strict filters for 85% win rate
+        # ============================================================
+        if signal is not None:
+             passed, reason = self._check_high_precision_filters(signal, opens, highs, lows, closes)
+             if not passed:
+                 LOG.warning("SIGNAL BLOCKED (High Precision): %s", reason)
+                 signal = None
 
         if signal:
             self.set_cooldown(minutes=5)
@@ -1487,3 +1497,83 @@ class PriceActionStrategy:
                  avg_range_pips, sl_pips, tp_pips)
 
         return sl_pips, tp_pips
+
+    def _check_high_precision_filters(self, signal: Signal, opens: np.ndarray, 
+                                     highs: np.ndarray, lows: np.ndarray, 
+                                     closes: np.ndarray) -> Tuple[bool, str]:
+        """
+        Apply strict filters for 85% win rate target.
+        
+        Filters:
+        1. Spread Check: Must be < max_spread_pips
+        2. RSI Check: Must be in safe zone (not overbought for BUY, not oversold for SELL)
+        3. ADX Check: Market must be trending (ADX > min_adx)
+        4. Candle Confirmation: Require 2 consecutive candles in direction
+        """
+        if not getattr(self.cfg.strategy, 'high_precision_mode', False):
+            return True, "filters_disabled"
+            
+        # 1. Spread Check
+        info = self.mt5.symbol_info(self.cfg.symbol)
+        if info:
+            spread_pips = info.spread / 10 if info.digits == 5 else info.spread
+            max_spread = getattr(self.cfg.strategy, 'max_spread_pips', 1.5)
+            if spread_pips > max_spread:
+                return False, f"spread_too_high ({spread_pips:.1f} > {max_spread})"
+        
+        # Calculate indicators
+        ind = calculate_all_indicators(highs, lows, closes)
+        
+        # 2. RSI Check
+        rsi_val = ind.rsi
+        if signal.side == "BUY":
+            min_rsi = getattr(self.cfg.strategy, 'min_rsi_buy', 40.0)
+            max_rsi = getattr(self.cfg.strategy, 'max_rsi_buy', 70.0)
+            if not (min_rsi <= rsi_val <= max_rsi):
+                return False, f"rsi_filtered ({rsi_val:.1f} not in {min_rsi}-{max_rsi})"
+        else: # SELL
+            min_rsi = getattr(self.cfg.strategy, 'min_rsi_sell', 30.0)
+            max_rsi = getattr(self.cfg.strategy, 'max_rsi_sell', 60.0)
+            if not (min_rsi <= rsi_val <= max_rsi):
+                return False, f"rsi_filtered ({rsi_val:.1f} not in {min_rsi}-{max_rsi})"
+                
+        # 3. ADX Check (Trend Strength)
+        min_adx = getattr(self.cfg.strategy, 'min_adx', 20.0)
+        if ind.adx < min_adx:
+             return False, f"low_adx ({ind.adx:.1f} < {min_adx})"
+             
+        # 4. Confirmation Candles (2 candles)
+        if signal.side == "BUY":
+            # Both recent candles should be generally bullish or at least not bearish engulfing
+            if closes[-2] < opens[-2] and closes[-3] < opens[-3]:
+                 return False, "recent_candles_bearish"
+        else: # SELL
+             if closes[-2] > opens[-2] and closes[-3] > opens[-3]:
+                 return False, "recent_candles_bullish"
+
+        return True, "passed"
+
+    def _get_chart_trend_filter(self, closes: np.ndarray, highs: np.ndarray, lows: np.ndarray, pip_value: float) -> Tuple[str, str, str]:
+        """
+        Analyze chart trend using EMA structure. 
+        Replaces placeholder with actual logic.
+        """
+        # Calculate 50 EMA
+        ema_vals = []
+        period = self.trend_ema_period
+        alpha = 2.0 / (period + 1.0)
+        ema_curr = closes[0]
+        ema_vals.append(ema_curr)
+        for i in range(1, len(closes)):
+            ema_curr = alpha * closes[i] + (1 - alpha) * ema_curr
+            ema_vals.append(ema_curr)
+            
+        current_ema = ema_vals[-1]
+        current_price = closes[-1]
+        
+        if current_price > current_ema + (self.min_ema_distance_pips * pip_value):
+            return "BUY", "uptrend", "Price > 50EMA"
+        elif current_price < current_ema - (self.min_ema_distance_pips * pip_value):
+            return "SELL", "downtrend", "Price < 50EMA"
+        else:
+            return "BOTH", "ranging", "Price near 50EMA"

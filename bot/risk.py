@@ -127,9 +127,9 @@ class RiskManager:
         lots = (lots // step) * step
         lots = float(max(min_lot, lots))
 
-        # SAFETY CAP: Never trade more than 5 lots regardless of calculation
+        # SAFETY CAP: Never trade more than defined cap (default 3.0)
         # This prevents catastrophic losses from calculation errors
-        MAX_SAFE_LOTS = 5.0
+        MAX_SAFE_LOTS = getattr(self.cfg.risk, 'max_lot_size', 3.0)
         if lots > MAX_SAFE_LOTS:
             LOG.warning("LOT SIZE CAPPED: Calculated %.2f lots, capping to %.2f for safety",
                        lots, MAX_SAFE_LOTS)

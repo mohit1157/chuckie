@@ -9,10 +9,11 @@ magic: 80808080  # Unique magic number for this strategy
 
 # Risk Management - Confident sizing with precise entries
 risk:
-  account_risk_per_trade: 0.05  # 5% per trade - confidence in entries
-  max_spread_points: 25  # Max 2.5 pips spread
-  max_open_positions: 1  # Only 1 position at a time
-  max_daily_loss_pct: 0.10  # Stop after 10% daily loss
+  account_risk_per_trade: 0.015  # FIX: Reduced to 1.5%
+  max_spread_points: 25
+  max_open_positions: 1
+  max_daily_loss_pct: 0.03  # FIX: Reduced to 3% daily limit
+  max_lot_size: 3.0  # FIX: Capped at 3 lots
 
 # Trade Parameters - WIDER SL/TP for stability
 # 5 pip SL was getting hit by market noise - need more room
@@ -45,6 +46,7 @@ strategy:
   atr_sl_multiplier: 1.5  # SL = 1.5 * ATR
   atr_tp_multiplier: 1.0  # TP = 1.0 * ATR
   cooldown_minutes: 5  # Wait 5 min between trades (was 3)
+  strong_rejection_enabled: false  # FIX: Disabled due to 0% win rate
 
 # Session Filter - CRITICAL: Only trade during good sessions
 # Sydney session (score 10/100) caused all the losses!

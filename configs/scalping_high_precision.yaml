@@ -1,0 +1,66 @@
+# High-Precision Scalping Configuration
+# Targeting >85% win rate with strict filtering
+# Optimized for EURUSD/USDCAD on M3-M5 timeframes
+
+mode: demo  # Change to 'live' for real trading
+symbol: "EURUSD"
+timeframe: "M3"
+magic: 85858585
+
+# Risk Management - Conservative
+risk:
+  account_risk_per_trade: 0.015  # 1.5% confident risk
+  max_spread_points: 25
+  max_open_positions: 1
+  max_daily_loss_pct: 0.03       # 3% daily limit
+  max_lot_size: 3.0              # Strict lot cap
+
+# Trade Parameters - Room to breathe
+trade:
+  sl_pips: 15
+  tp_pips: 22
+  trailing_stop:
+    enabled: true
+    start_pips: 5
+    trail_pips: 3
+  partial_profit:
+    enabled: false
+
+# Strategy Configuration - STRICT MODE
+strategy:
+  name: "price_action"
+  fast_ema: 9
+  slow_ema: 21
+  breakout_lookback: 20
+  
+  # High Precision Settings
+  high_precision_mode: true      # ENABLED
+  min_adx: 20.0                  # Market must be trending
+  max_rsi_buy: 70.0              # Don't buy overbought
+  min_rsi_buy: 40.0
+  max_rsi_sell: 60.0             # Don't sell oversold
+  min_rsi_sell: 30.0
+  max_spread_pips: 1.5           # Strict spread
+  
+  # Standard Settings
+  min_confirmations: 6
+  use_dynamic_sl_tp: true
+  atr_sl_multiplier: 1.5
+  atr_tp_multiplier: 1.0
+  cooldown_minutes: 5
+  strong_rejection_enabled: false # Disabled
+
+# Session Filter - Strict
+session:
+  enabled: true
+  min_session_quality: 50        # Only trade high quality sessions
+
+# News Filter
+news_filter:
+  enabled: true
+  minutes_before: 30
+  minutes_after: 15
+  provider: "full"
+
+logging:
+  level: "INFO"
