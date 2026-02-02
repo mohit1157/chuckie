@@ -18,7 +18,7 @@ from typing import Optional, List, Tuple
 
 from .config import AppConfig
 from .mt5_client import MT5Client
-from .mt5_helpers import get_recent_bars
+from .data import get_recent_bars
 
 LOG = logging.getLogger("bot.price_action")
 
