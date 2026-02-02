@@ -79,7 +79,12 @@ class MT5Client:
         return mt5.positions_get(**kwargs)
 
     def order_send(self, request: dict):
-        return mt5.order_send(request)
+        import logging
+        LOG = logging.getLogger("bot.mt5")
+        LOG.info(">>> ORDER_SEND: %s", request)
+        result = mt5.order_send(request)
+        LOG.info(">>> ORDER_RESULT: %s", result)
+        return result
 
     def order_check(self, request: dict):
         return mt5.order_check(request)

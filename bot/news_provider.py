@@ -515,7 +515,7 @@ class RedditSentiment:
             LOG.info("Fetched %d Reddit posts", len(posts))
 
         except Exception as e:
-            LOG.warning("Failed to fetch Reddit posts: %s", e)
+            LOG.debug("Reddit unavailable: %s", e)  # Debug level to reduce log noise
 
         return posts
 

@@ -143,10 +143,13 @@ class SessionFilter:
         minute = now.minute
         weekday = now.weekday()
 
-        # Avoid Sunday market open (first 30 min after open for demo, 2 hours for live)
-        # Market opens at 22:00 UTC Sunday
-        if weekday == 6 and hour == 22 and minute < 30:
-            return True, "Sunday market open - waiting for spreads to normalize"
+        # Avoid Sunday market open (first 2 hours after open)
+        # Market opens at 22:00 UTC Sunday - gaps and wide spreads common
+        # TEMPORARILY DISABLED FOR TESTING - uncomment for live trading:
+        # if weekday == 6 and hour >= 22:
+        #     return True, "Sunday market open - gaps and wide spreads possible"
+        # if weekday == 0 and hour < 0:
+        #     return True, "Early Monday - low liquidity"
 
         # Avoid Friday close (last 2 hours before close)
         if weekday == 4 and hour >= 20:

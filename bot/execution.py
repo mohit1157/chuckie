@@ -60,6 +60,7 @@ class ExecutionEngine:
                 LOG.info("Trailing SL updated ticket=%s new_sl=%.5f", p.ticket, new_sl)
 
     def execute_signal(self, sig: Signal) -> None:
+        LOG.info(">>> EXECUTE_SIGNAL CALLED: %s %s reason=%s", self.cfg.symbol, sig.side, sig.reason)
         info = self.mt5.symbol_info(self.cfg.symbol)
         tick = self.mt5.symbol_info_tick(self.cfg.symbol)
         if info is None or tick is None:
