@@ -505,6 +505,7 @@ class PriceActionStrategy:
         # ============================================================
         # If no S/R signal, check for momentum entry
         # FIX 6: Don't momentum BUY at resistance, don't momentum SELL at support
+        # FIX 15: Pass opens/closes to check current candle direction
         if signal is None and self.momentum_entry_enabled:
             signal = self._check_momentum_entry(
                 trend=trend,
@@ -513,6 +514,8 @@ class PriceActionStrategy:
                 pattern_confidence=pattern_confidence,
                 current_close=current_close,
                 pip_value=pip_value,
+                opens=opens,
+                closes=closes,
                 highs=highs,
                 lows=lows,
                 at_support=at_support,
@@ -521,16 +524,20 @@ class PriceActionStrategy:
 
         # ============================================================
         # FIX 2: MA TOUCH ENTRY - Trade pullbacks to moving average
+        # FIX 14: Also respect support/resistance like momentum entry
         # ============================================================
         if signal is None and self.ma_touch_enabled:
             signal = self._check_ma_touch_entry(
+                opens=opens,
                 closes=closes,
                 highs=highs,
                 lows=lows,
                 current_close=current_close,
                 pip_value=pip_value,
                 trend=trend,
-                momentum=recent_momentum
+                momentum=recent_momentum,
+                at_support=at_support,
+                at_resistance=at_resistance
             )
 
         # ============================================================
@@ -942,16 +949,19 @@ class PriceActionStrategy:
 
     def _check_momentum_entry(self, trend: str, momentum: str, pattern_bias: Optional[str],
                                pattern_confidence: float, current_close: float, pip_value: float,
+                               opens: np.ndarray, closes: np.ndarray,
                                highs: np.ndarray, lows: np.ndarray,
                                at_support: bool = False, at_resistance: bool = False) -> Optional[Signal]:
         """
         FIX 1: Momentum Entry - Enter strong trends without requiring S/R level.
+        FIX 15: Don't enter if current candle is against trade direction.
 
         This catches breakdowns/breakouts where:
         - Strong trend is established
         - Currency bias strongly aligns
         - Momentum confirms direction
         - Pattern analysis supports direction
+        - Current candle confirms direction (FIX 15)
 
         A good trader sees "everything is bearish" and sells, without waiting for
         price to touch a specific level.
@@ -962,11 +972,20 @@ class PriceActionStrategy:
         if self._bias_strength < self.momentum_min_bias_strength:
             return None
 
+        # FIX 15: Check current candle direction
+        # Don't buy if current candle is bearish (close < open)
+        # Don't sell if current candle is bullish (close > open)
+        current_open = opens[-1]
+        current_candle_bullish = closes[-1] > current_open
+        current_candle_bearish = closes[-1] < current_open
+
         # SELL momentum entry
         # FIX 6: Block SELL at support (support is where price bounces UP)
+        # FIX 15: Block SELL if current candle is bullish (direction change filter)
         if (trend in ["strong_downtrend", "downtrend"] and
             self._currency_bias == "SELL" and
             momentum == "bearish" and
+            current_candle_bearish and  # FIX 15: Current candle must be bearish!
             pattern_bias == "SELL" and
             pattern_confidence >= self.momentum_min_pattern_confidence and
             not at_support):  # FIX 6: Don't sell at support!
@@ -1002,9 +1021,11 @@ class PriceActionStrategy:
 
         # BUY momentum entry
         # FIX 6: Block BUY at resistance (resistance is where price bounces DOWN)
+        # FIX 15: Block BUY if current candle is bearish (direction change filter)
         elif (trend in ["strong_uptrend", "uptrend"] and
               self._currency_bias == "BUY" and
               momentum == "bullish" and
+              current_candle_bullish and  # FIX 15: Current candle must be bullish!
               pattern_bias == "BUY" and
               pattern_confidence >= self.momentum_min_pattern_confidence and
               not at_resistance):  # FIX 6: Don't buy at resistance!
@@ -1043,6 +1064,12 @@ class PriceActionStrategy:
             LOG.warning("MOMENTUM BUY BLOCKED: Price at resistance - waiting for breakout or pullback")
         if at_support and self._currency_bias == "SELL" and trend in ["strong_downtrend", "downtrend"]:
             LOG.warning("MOMENTUM SELL BLOCKED: Price at support - waiting for breakdown or pullback")
+
+        # FIX 15: Log when momentum entry is blocked due to candle direction
+        if not current_candle_bullish and self._currency_bias == "BUY" and trend in ["strong_uptrend", "uptrend"] and momentum == "bullish":
+            LOG.warning("MOMENTUM BUY BLOCKED: Current candle is bearish - waiting for bullish candle")
+        if not current_candle_bearish and self._currency_bias == "SELL" and trend in ["strong_downtrend", "downtrend"] and momentum == "bearish":
+            LOG.warning("MOMENTUM SELL BLOCKED: Current candle is bullish - waiting for bearish candle")
 
         return None
 
@@ -1198,19 +1225,29 @@ class PriceActionStrategy:
 
         return ema
 
-    def _check_ma_touch_entry(self, closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
+    def _check_ma_touch_entry(self, opens: np.ndarray, closes: np.ndarray,
+                               highs: np.ndarray, lows: np.ndarray,
                                current_close: float, pip_value: float,
-                               trend: str, momentum: str) -> Optional[Signal]:
+                               trend: str, momentum: str,
+                               at_support: bool = False, at_resistance: bool = False) -> Optional[Signal]:
         """
         FIX 2: MA Touch Entry - Enter when price pulls back to moving average in a trend.
+        FIX 14: Also respect support/resistance levels like momentum entry.
+        FIX 15: Don't enter if current candle is against trade direction.
 
         This catches "rally then sell" or "dip then buy" setups where:
         - Price is trending (established by trend structure)
         - Price pulls back to touch the moving average
         - MA acts as dynamic support/resistance
+        - NOT at major S/R level going against the trade (FIX 14)
+        - Current candle confirms direction (FIX 15)
 
         A good trader sees "price touched the 20 EMA in a downtrend" and sells.
         """
+        # FIX 15: Check current candle direction
+        current_open = opens[-1]
+        current_candle_bullish = closes[-1] > current_open
+        current_candle_bearish = closes[-1] < current_open
         if len(closes) < self.ma_period + 5:
             return None
 
@@ -1224,11 +1261,22 @@ class PriceActionStrategy:
         if ema_distance_pips > self.ma_touch_tolerance_pips:
             return None  # Not touching EMA
 
+        # FIX 14: Block MA_TOUCH at wrong S/R level
+        if at_resistance and self._currency_bias == "BUY":
+            LOG.warning("MA TOUCH BUY BLOCKED: Price at resistance - waiting for breakout or pullback")
+            return None
+        if at_support and self._currency_bias == "SELL":
+            LOG.warning("MA TOUCH SELL BLOCKED: Price at support - waiting for breakdown or rally")
+            return None
+
         # SELL: Downtrend + price rallied up to touch EMA from below
         # FIX 11: MUST have bearish momentum (price starting to fall) before selling
+        # FIX 14: Don't sell at support!
         if (trend in ["strong_downtrend", "downtrend"] and
             self._currency_bias == "SELL" and
             momentum == "bearish" and  # FIX 11: Require momentum confirms direction!
+            current_candle_bearish and  # FIX 15: Current candle must be bearish!
+            not at_support and  # FIX 14: Don't sell at support!
             current_close <= current_ema):  # At or just below EMA
 
             # Confirm: Recent candles came UP to EMA (rally into resistance)
@@ -1265,9 +1313,12 @@ class PriceActionStrategy:
 
         # BUY: Uptrend + price dipped down to touch EMA from above
         # FIX 11: MUST have bullish momentum (price starting to rise) before buying
+        # FIX 14: Don't buy at resistance!
         elif (trend in ["strong_uptrend", "uptrend"] and
               self._currency_bias == "BUY" and
               momentum == "bullish" and  # FIX 11: Require momentum confirms direction!
+              current_candle_bullish and  # FIX 15: Current candle must be bullish!
+              not at_resistance and  # FIX 14: Don't buy at resistance!
               current_close >= current_ema):  # At or just above EMA
 
             # Confirm: Recent candles came DOWN to EMA (dip into support)

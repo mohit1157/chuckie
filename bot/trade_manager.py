@@ -12,6 +12,7 @@ A good trader doesn't just set SL/TP and walk away.
 They actively manage the trade based on what the chart is showing.
 """
 import logging
+import time
 import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -126,11 +127,41 @@ class SmartTradeManager:
         """
         actions = []
 
+        if not self._trades:
+            return actions
+
+        # Sync: Remove trades that are no longer open in MT5
+        self._sync_with_mt5()
+
         for ticket, trade in list(self._trades.items()):
             action = self._manage_single_trade(trade)
+            if action != "none":
+                LOG.info("Trade management action: ticket=%d action=%s", ticket, action)
             actions.append((ticket, action))
 
         return actions
+
+    def _sync_with_mt5(self):
+        """Remove trades that are no longer open in MT5."""
+        positions = self.mt5.positions_get()
+        open_tickets = set()
+        if positions:
+            for p in positions:
+                if p.magic == self.cfg.magic:
+                    open_tickets.add(p.ticket)
+
+        # Find closed trades
+        closed_tickets = []
+        for ticket in self._trades.keys():
+            if ticket not in open_tickets:
+                closed_tickets.append(ticket)
+
+        # Remove closed trades
+        for ticket in closed_tickets:
+            del self._trades[ticket]
+            if ticket in self._trade_went_negative_time:
+                del self._trade_went_negative_time[ticket]
+            LOG.info("Trade manager: Removed closed trade ticket=%d", ticket)
 
     def _manage_single_trade(self, trade: ManagedTrade) -> str:
         """
@@ -141,10 +172,12 @@ class SmartTradeManager:
         # Get current price
         tick = self.mt5.symbol_info_tick(trade.symbol)
         if tick is None:
+            LOG.warning("Trade manager: tick is None for %s", trade.symbol)
             return "none"
 
         info = self.mt5.symbol_info(trade.symbol)
         if info is None:
+            LOG.warning("Trade manager: info is None for %s", trade.symbol)
             return "none"
 
         pip_value = info.point * 10
@@ -160,6 +193,14 @@ class SmartTradeManager:
         # Track best/worst
         trade.highest_profit_pips = max(trade.highest_profit_pips, profit_pips)
         trade.lowest_profit_pips = min(trade.lowest_profit_pips, profit_pips)
+
+        # DEBUG: Log trade status every 30 seconds
+        now = int(time.time())
+        if not hasattr(trade, '_last_status_log') or now - trade._last_status_log >= 30:
+            trade._last_status_log = now
+            LOG.info("TRADE STATUS: ticket=%d %s | profit=%.1f pips | best=%.1f | BE_hit=%s | price=%.5f",
+                     trade.ticket, trade.side, profit_pips, trade.highest_profit_pips,
+                     trade.breakeven_hit, current_price)
 
         # Update candle tracking
         self._update_candle_tracking(trade, pip_value)

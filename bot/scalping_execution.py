@@ -11,6 +11,7 @@ Exit Strategies:
 """
 import logging
 import re
+import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Dict, Set, Tuple
@@ -110,16 +111,22 @@ class ScalpingExecutionEngine:
                 info = self.mt5.symbol_info(self.cfg.symbol)
                 pip_value = info.point * 10 if info else 0.0001
 
-                if profit > 0:
+                # FIX: Better status detection based on deal comment
+                comment = deal.comment.lower() if deal.comment else ""
+                if "tp" in comment or profit > 0 and "sl" not in comment and "trail" not in comment:
                     status = "closed_tp"
+                elif "trail" in comment or "smart_trail" in comment:
+                    status = "closed_trail" if profit > 0 else "closed_sl"
                 elif profit < 0:
                     status = "closed_sl"
-                else:
+                elif profit == 0:
                     status = "closed_be"
+                else:
+                    status = "closed_profit"  # Profitable but not TP (e.g., trailing)
 
                 pips = 0
                 self.logger.log_exit(trade_id, deal.price, profit, pips, status)
-                LOG.info("Position closed: ticket=%d profit=%.2f", ticket, profit)
+                LOG.info("Position closed: ticket=%d profit=%.2f status=%s", ticket, profit, status)
                 break
 
     def _calculate_support_resistance(self):
@@ -277,10 +284,15 @@ class ScalpingExecutionEngine:
         - Let remaining 50% run for more profit
         """
         if not self.cfg.trade.partial_profit.enabled:
+            LOG.debug("Partial profit disabled")
             return False
 
         state = self._positions.get(position.ticket)
-        if state is None or state.partial_taken:
+        if state is None:
+            LOG.warning("PARTIAL CHECK: No state for ticket=%d (known tickets: %s)",
+                       position.ticket, list(self._positions.keys()))
+            return False
+        if state.partial_taken:
             return False
 
         # FIX 9: Calculate profit in PIPS instead of account percentage
@@ -530,6 +542,19 @@ class ScalpingExecutionEngine:
         LOG.info("Order executed: %s %.2f lots @ %.5f | SL=%.5f TP=%.5f | reason=%s",
                  sig.side, lots, price, sl, tp, sig.reason)
 
+        # FIX 12: Get actual position ticket (may differ from order number)
+        time.sleep(0.1)  # Brief delay for MT5 to create position
+
+        position_ticket = res.order  # Default to order number
+        positions = self.mt5.positions_get(symbol=self.cfg.symbol)
+        if positions:
+            for pos in positions:
+                if pos.magic == self.cfg.magic and abs(pos.price_open - price) < 0.0001:
+                    position_ticket = pos.ticket
+                    if position_ticket != res.order:
+                        LOG.info("Position ticket resolved: order=%d -> position=%d", res.order, position_ticket)
+                    break
+
         trade_id = self.logger.log_entry(
             symbol=self.cfg.symbol,
             side=sig.side,
@@ -539,12 +564,12 @@ class ScalpingExecutionEngine:
             tp_price=tp,
             reason=sig.reason,
             magic=self.cfg.magic,
-            ticket=res.order
+            ticket=position_ticket
         )
 
-        # Track position state
-        self._positions[res.order] = PositionState(
-            ticket=res.order,
+        # Track position state using actual position ticket
+        self._positions[position_ticket] = PositionState(
+            ticket=position_ticket,
             trade_id=trade_id,
             entry_price=price,
             entry_time=datetime.now(timezone.utc),
@@ -553,6 +578,7 @@ class ScalpingExecutionEngine:
             partial_taken=False,
             sl_locked_at_profit=False,
         )
+        LOG.info("Position state registered: ticket=%d for partial profit tracking", position_ticket)
 
         # Calculate initial support/resistance
         self._calculate_support_resistance()
@@ -648,6 +674,19 @@ class ScalpingExecutionEngine:
         LOG.info("Order executed: %s %.2f lots @ %.5f | SL=%.5f TP=%.5f | reason=%s",
                  sig.side, lots, price, sl, tp, sig.reason)
 
+        # FIX 12: Get actual position ticket (may differ from order number)
+        time.sleep(0.1)  # Brief delay for MT5 to create position
+
+        position_ticket = res.order  # Default to order number
+        positions = self.mt5.positions_get(symbol=self.cfg.symbol)
+        if positions:
+            for pos in positions:
+                if pos.magic == self.cfg.magic and abs(pos.price_open - price) < 0.0001:
+                    position_ticket = pos.ticket
+                    if position_ticket != res.order:
+                        LOG.info("Position ticket resolved: order=%d -> position=%d", res.order, position_ticket)
+                    break
+
         trade_id = self.logger.log_entry(
             symbol=self.cfg.symbol,
             side=sig.side,
@@ -657,12 +696,12 @@ class ScalpingExecutionEngine:
             tp_price=tp,
             reason=sig.reason,
             magic=self.cfg.magic,
-            ticket=res.order
+            ticket=position_ticket
         )
 
-        # Track position state
-        self._positions[res.order] = PositionState(
-            ticket=res.order,
+        # Track position state using actual position ticket
+        self._positions[position_ticket] = PositionState(
+            ticket=position_ticket,
             trade_id=trade_id,
             entry_price=price,
             entry_time=datetime.now(timezone.utc),
@@ -671,10 +710,11 @@ class ScalpingExecutionEngine:
             partial_taken=False,
             sl_locked_at_profit=False,
         )
+        LOG.info("Position state registered: ticket=%d for partial profit tracking", position_ticket)
 
         self._calculate_support_resistance()
 
-        return True, res.order
+        return True, position_ticket
 
     def manage_positions(self):
         """
