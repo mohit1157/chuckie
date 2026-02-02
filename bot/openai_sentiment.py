@@ -46,6 +46,7 @@ class OpenAISentimentAnalyzer:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._client = None
         self._initialized = False
+        self._disabled = False  # Set to True if quota exceeded
 
     def _init_client(self) -> bool:
         """Initialize OpenAI client."""
@@ -127,6 +128,16 @@ class OpenAISentimentAnalyzer:
         Returns:
             SentimentResult with sentiment score and metadata
         """
+        # Skip if disabled due to quota issues
+        if self._disabled:
+            return SentimentResult(
+                headline=headline,
+                sentiment=0.0,
+                confidence=0.0,
+                currencies=[],
+                reasoning="OpenAI disabled (quota)",
+            )
+
         # Check cache first
         cache_key = self._get_cache_key(headline)
         if cache_key in self._cache:
@@ -198,7 +209,15 @@ Consider:
             return result
 
         except Exception as e:
+            error_str = str(e)
             LOG.warning("OpenAI analysis failed: %s", e)
+
+            # Check for quota/billing errors - disable to avoid repeated failures
+            if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
+                LOG.warning("OpenAI quota exceeded - disabling OpenAI sentiment for this session")
+                LOG.warning("Add billing at https://platform.openai.com/settings/organization/billing")
+                self._disabled = True
+
             return SentimentResult(
                 headline=headline,
                 sentiment=0.0,
