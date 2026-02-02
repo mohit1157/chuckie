@@ -24,8 +24,9 @@ class TrailingStopConfig:
 @dataclass
 class PartialProfitConfig:
     enabled: bool = True
-    profit_pct: float = 0.15       # Take partial at 15% profit
-    close_pct: float = 0.80        # Close 80% of position
+    profit_pct: float = 0.15       # LEGACY: Take partial at 15% profit (not used anymore)
+    profit_pips: float = 5.0       # FIX 9: Take partial at 5 pips profit (scalping friendly)
+    close_pct: float = 0.50        # FIX 9: Close 50% of position (was 80%)
     move_sl_to_profit: bool = True # Move SL to lock in profit
 
 

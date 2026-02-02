@@ -271,10 +271,10 @@ class ScalpingExecutionEngine:
         """
         Check if position should take partial profit.
 
-        At 15% profit:
-        - Close 80% of position
-        - Move SL to lock in 15% profit
-        - Continue trailing remaining 20%
+        FIX 9: At 5 pips profit (scalping friendly):
+        - Close 50% of position (lock in profit)
+        - Move SL to breakeven
+        - Let remaining 50% run for more profit
         """
         if not self.cfg.trade.partial_profit.enabled:
             return False
@@ -283,15 +283,24 @@ class ScalpingExecutionEngine:
         if state is None or state.partial_taken:
             return False
 
-        # Calculate current profit percentage
-        account = self.mt5.account_info()
-        if account is None:
+        # FIX 9: Calculate profit in PIPS instead of account percentage
+        info = self.mt5.symbol_info(position.symbol)
+        if info is None:
             return False
 
-        profit_pct = position.profit / account.balance if account.balance > 0 else 0
+        pip_value = info.point * 10
+        is_buy = (position.type == mt5.POSITION_TYPE_BUY)
 
-        if profit_pct >= self.cfg.trade.partial_profit.profit_pct:
-            LOG.info("PARTIAL PROFIT: Position at %.1f%% profit - closing 80%%", profit_pct * 100)
+        if is_buy:
+            profit_pips = (position.price_current - position.price_open) / pip_value
+        else:
+            profit_pips = (position.price_open - position.price_current) / pip_value
+
+        trigger_pips = getattr(self.cfg.trade.partial_profit, 'profit_pips', 5.0)
+
+        if profit_pips >= trigger_pips:
+            LOG.info("PARTIAL PROFIT: Position at +%.1f pips - closing 50%% and moving SL to BE",
+                    profit_pips)
             return True
 
         return False
