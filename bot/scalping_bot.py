@@ -238,9 +238,8 @@ class DynamicPairSelector:
             volatility_score, vol_reason = self._get_volatility_score(pair)
             spread_score, spr_reason = self._get_spread_score(pair)
 
-            # Skip if spread is too wide
-            if spread_score == 0:
-                continue
+            # Note: Don't skip wide spread pairs - just give them low score
+            # This way we still see them in the log
 
             # Calculate weighted total
             total_score = (

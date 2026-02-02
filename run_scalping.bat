@@ -19,6 +19,6 @@ echo Starting bot...
 echo Press Ctrl+C to stop
 echo.
 
-python -m bot.scalping_bot --config %CONFIG%
+.venv\Scripts\python.exe -m bot.scalping_bot --config %CONFIG%
 
 pause
