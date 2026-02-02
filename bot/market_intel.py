@@ -694,11 +694,30 @@ class MarketIntelligence:
         if context.vix_value > 30:
             return False, f"High market fear (VIX={context.vix_value:.1f}) - avoid scalping"
 
-        # CRITICAL: Re-enable avoid_pairs check - EURUSD was in avoid list and we lost!
-        # The pair selector score can be fooled by sentiment, but avoid_pairs is based on
-        # actual currency strength analysis which proved more reliable.
-        if symbol in context.avoid_pairs:
-            return False, f"{symbol} in avoid list (currency strength unfavorable)"
+        # Check if direction aligns with currency strength
+        # avoid_pairs are pairs where USD is quote and USD is strong (or vice versa)
+        # We should SELL these pairs, not avoid them entirely
+        base_currency = symbol[:3]
+        quote_currency = symbol[3:]
+
+        # Get currency strengths
+        base_strength = context.currency_strengths.get(base_currency)
+        quote_strength = context.currency_strengths.get(quote_currency)
+
+        if base_strength and quote_strength:
+            strength_diff = base_strength.strength - quote_strength.strength
+
+            # If base is weaker than quote
+            if strength_diff < -20:  # Significant weakness
+                if direction == "BUY":
+                    return False, f"BUY blocked: {base_currency} weak ({base_strength.strength:.0f}) vs {quote_currency} strong ({quote_strength.strength:.0f})"
+                # SELL is good - we're shorting the weak currency
+
+            # If base is stronger than quote
+            elif strength_diff > 20:  # Significant strength
+                if direction == "SELL":
+                    return False, f"SELL blocked: {base_currency} strong ({base_strength.strength:.0f}) vs {quote_currency} weak ({quote_strength.strength:.0f})"
+                # BUY is good - we're buying the strong currency
 
         return True, "Trade aligns with market context"
 
