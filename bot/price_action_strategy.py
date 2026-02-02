@@ -19,6 +19,8 @@ from typing import Optional, List, Tuple
 from .config import AppConfig
 from .mt5_client import MT5Client
 from .data import get_recent_bars
+from .pattern_recognition import PatternRecognition, DetectedPattern
+from .level_memory import LevelMemory
 
 LOG = logging.getLogger("bot.price_action")
 
@@ -91,6 +93,13 @@ class PriceActionStrategy:
         self._tick_count: int = 0
         self._buyer_pressure: float = 0.5  # 0=sellers, 1=buyers
         self._last_tick_price: Optional[float] = None
+
+        # Pattern recognition and level memory
+        info = self.mt5.symbol_info(cfg.symbol)
+        pip_value = info.point * 10 if info else 0.0001
+        self.pattern_recognition = PatternRecognition(pip_value=pip_value)
+        self.level_memory = LevelMemory(symbol=cfg.symbol, pip_value=pip_value)
+        self._detected_patterns: List[DetectedPattern] = []
 
     def set_currency_bias(self, direction: Optional[str], strength: float = 0.0):
         """Set the currency strength bias for trade classification."""
@@ -278,6 +287,22 @@ class PriceActionStrategy:
         # Step 7: Check momentum (are recent candles supporting the move?)
         recent_momentum = self._analyze_momentum(opens, closes)
 
+        # Step 8: Detect chart patterns (double tops, channels, etc.)
+        self._detected_patterns = self.pattern_recognition.detect_all_patterns(
+            opens, highs, lows, closes
+        )
+        pattern_bias, pattern_confidence = self.pattern_recognition.get_pattern_bias(
+            self._detected_patterns
+        )
+
+        # Step 9: Check level history (how did price react here before?)
+        support_prediction = None
+        resistance_prediction = None
+        if nearest_support:
+            support_prediction = self.level_memory.predict_reaction(nearest_support, "support")
+        if nearest_resistance:
+            resistance_prediction = self.level_memory.predict_reaction(nearest_resistance, "resistance")
+
         # Log analysis
         LOG.info("Price Action Analysis:")
         LOG.info("  Trend: %s | Momentum: %s | Currency Bias: %s", trend, recent_momentum, self._currency_bias or "NEUTRAL")
@@ -285,6 +310,23 @@ class PriceActionStrategy:
                  nearest_support or 0, at_support, nearest_resistance or 0, at_resistance)
         LOG.info("  Bullish Rejection: %s | Bearish Rejection: %s", bullish_rejection, bearish_rejection)
         LOG.info("  Bullish Engulfing: %s | Bearish Engulfing: %s", bullish_engulfing, bearish_engulfing)
+
+        # Log patterns if detected
+        if self._detected_patterns:
+            for p in self._detected_patterns[:2]:  # Log top 2 patterns
+                LOG.info("  Pattern: %s (%s) | strength: %.2f", p.pattern_type.value, p.direction, p.strength)
+        if pattern_bias:
+            LOG.info("  Pattern Bias: %s (confidence: %.2f)", pattern_bias, pattern_confidence)
+
+        # Log level history if available
+        if support_prediction and support_prediction["touch_count"] > 0:
+            LOG.info("  Support History: %d touches | likely: %s (%.0f%% conf)",
+                     support_prediction["touch_count"], support_prediction["likely_reaction"],
+                     support_prediction["confidence"] * 100)
+        if resistance_prediction and resistance_prediction["touch_count"] > 0:
+            LOG.info("  Resistance History: %d touches | likely: %s (%.0f%% conf)",
+                     resistance_prediction["touch_count"], resistance_prediction["likely_reaction"],
+                     resistance_prediction["confidence"] * 100)
 
         # Generate signal based on confluence
         signal = None
@@ -304,6 +346,13 @@ class PriceActionStrategy:
                 trend_aligned=(trend in ["uptrend", "strong_uptrend", "ranging"]),
                 momentum_aligned=(recent_momentum in ["bullish", "neutral"])
             )
+
+            # Boost confidence if level history supports bounce
+            if support_prediction and support_prediction["likely_reaction"] == "bounce":
+                confidence += support_prediction["confidence"] * 0.1
+            # Boost if pattern supports direction
+            if pattern_bias == "BUY":
+                confidence += pattern_confidence * 0.1
 
             if confidence >= min_confidence:
                 sl_price = nearest_support - (self.sr_touch_tolerance_pips * 2 * pip_value)
@@ -360,6 +409,13 @@ class PriceActionStrategy:
                 momentum_aligned=(recent_momentum in ["bearish", "neutral"])
             )
 
+            # Boost confidence if level history supports bounce
+            if resistance_prediction and resistance_prediction["likely_reaction"] == "bounce":
+                confidence += resistance_prediction["confidence"] * 0.1
+            # Boost if pattern supports direction
+            if pattern_bias == "SELL":
+                confidence += pattern_confidence * 0.1
+
             if confidence >= min_confidence:
                 sl_price = nearest_resistance + (self.sr_touch_tolerance_pips * 2 * pip_value)
                 risk_pips = (sl_price - current_close) / pip_value
@@ -402,7 +458,33 @@ class PriceActionStrategy:
         if signal:
             self.set_cooldown(minutes=5)
 
+            # Record this level touch for future reference
+            if signal.side == "BUY" and nearest_support:
+                self.level_memory.record_level_touch(
+                    price=nearest_support,
+                    level_type="support",
+                    reaction_type="bounce" if bullish_rejection else "reject",
+                    reaction_pips=risk_pips if 'risk_pips' in dir() else 5.0,
+                    candles_at_level=1
+                )
+            elif signal.side == "SELL" and nearest_resistance:
+                self.level_memory.record_level_touch(
+                    price=nearest_resistance,
+                    level_type="resistance",
+                    reaction_type="bounce" if bearish_rejection else "reject",
+                    reaction_pips=risk_pips if 'risk_pips' in dir() else 5.0,
+                    candles_at_level=1
+                )
+
         return signal
+
+    def get_detected_patterns(self) -> List[DetectedPattern]:
+        """Get the most recently detected patterns."""
+        return self._detected_patterns
+
+    def get_level_report(self):
+        """Log a report of known levels."""
+        self.level_memory.log_level_report()
 
     def _find_swing_highs(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> List[SwingPoint]:
         """Find swing high points (resistance levels)."""
