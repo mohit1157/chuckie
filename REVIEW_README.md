@@ -17,49 +17,55 @@ Chuckie is a forex scalping bot built on MetaTrader 5 with a price action strate
 | Metric | Value |
 |--------|-------|
 | **Starting Balance** | $50,000.00 |
-| **Current Balance** | $44,186.70 |
-| **Net P&L** | -$5,813.30 |
-| **Total Trades** | 27 |
-| **Winning Trades** | 12 |
-| **Losing Trades** | 15 |
-| **Win Rate** | 44.4% |
+| **Current Balance** | ~$45,100 |
+| **Net P&L** | ~-$4,900 |
+| **Total Trades** | 33 |
+| **Winning Trades** | 13 |
+| **Losing Trades** | 20 |
+| **Win Rate** | 39.4% |
 | **Account Type** | Demo (Forex.com) |
 
 ---
 
-## Complete Trade History
+## Complete Trade History (from MT5)
 
-### Feb 1-2, 2026 (All Trades)
+### Feb 2, 2026 (All Trades)
 
-| # | Time (UTC) | Symbol | Side | Lots | Entry | Exit | P&L | Status | Reason |
-|---|------------|--------|------|------|-------|------|-----|--------|--------|
-| 1 | 02:46:45 | USDCAD | BUY | 16.37 | 1.3632 | 1.36296 | -$289.69 | SL | scalp_buy - pullback_to_ema |
-| 2 | 02:49:46 | USDCAD | BUY | 16.37 | 1.36372 | 1.36377 | +$59.72 | TP | scalp_buy - rsi_buy_zone |
-| 3 | 02:56:17 | USDCAD | BUY | 16.37 | 1.36404 | - | - | OPEN | scalp_buy |
-| 4 | 03:15:37 | EURUSD | SELL | 16.37 | 1.18641 | 1.18691 | -$818.50 | SL | scalp_sell - trend_down |
-| 5 | 03:19:04 | EURUSD | SELL | 16.37 | 1.18674 | 1.18725 | -$834.87 | SL | scalp_sell - pullback_to_ema |
-| 6 | 03:22:07 | EURUSD | BUY | 13.09 | 1.18727 | 1.18698 | -$379.61 | SL | scalp_buy - rsi_buy_zone |
-| 7 | 04:28:13 | EURUSD | BUY | 15.28 | 1.18653 | - | - | OPEN | pa_buy - at_support+wick |
-| 8 | 05:04:44 | USDCAD | BUY | 16.41 | 1.36457 | 1.36491 | +$406.73 | TP | pa_buy - at_support+engulfing |
-| 9 | 07:53:47 | AUDUSD | SELL | 15.16 | 0.6939 | 0.69429 | -$606.40 | SL | pa_sell - at_resistance |
-| 10 | 09:05:10 | AUDUSD | SELL | 14.97 | 0.69435 | 0.69482 | -$688.62 | SL | pa_sell - at_resistance |
-| 11 | 09:15:01 | AUDUSD | SELL | 11.80 | 0.69462 | 0.69433 | +$354.00 | TP | ma_touch_sell |
-| 12 | 10:39:04 | USDCAD | SELL | 8.08 | 1.36345 | 1.36406 | -$381.00 | SL | strong_rejection_sell |
-| 13 | 11:12:12 | AUDUSD | SELL | 14.69 | 0.69563 | 0.69604 | -$587.60 | SL | pa_sell - wick_rejection |
-| 14 | 12:39:01 | USDCAD | BUY | 7.92 | 1.36398 | 1.36356 | -$245.17 | SL | strong_rejection_buy |
-| 15 | 14:48:01 | USDCHF | BUY | 3.50 | 0.77888 | 0.77893 | +$22.36 | TP | momentum_buy |
-| 16 | 14:55:11 | USDCHF | BUY | 3.50 | 0.77878 | 0.77883 | +$22.36 | TP | momentum_buy |
-| 17 | 15:00:11 | USDCHF | BUY | 3.50 | 0.77992 | 0.77997 | +$17.86 | TP | momentum_buy |
-| 18 | 15:10:49 | USDCHF | BUY | 3.50 | 0.78022 | - | - | OPEN | momentum_buy |
-| 19 | 15:33:00 | AUDCHF | BUY | 2.50 | 0.54315 | - | - | OPEN | strong_rejection_buy |
-| 20 | 15:47:08 | AUDCHF | BUY | 4.00 | 0.54286 | 0.54227 | -$303.78 | SL | ma_touch_buy |
-| 21 | 15:58:04 | AUDCHF | BUY | 4.00 | 0.54284 | - | - | OPEN | ma_touch_buy |
-| 22 | 16:09:17 | AUDCHF | BUY | 3.50 | 0.54288 | 0.54318 | +$133.90 | TRAIL | momentum_buy |
-| 23 | 16:48:04 | USDCHF | BUY | 3.50 | 0.78031 | 0.78038 | +$31.23 | TP | momentum_buy (manual close) |
-| 24 | 16:55:36 | USDCHF | BUY | 4.00 | 0.78050 | 0.77949 | -$520.88 | SL | ma_touch_buy (at resistance!) |
-| 25 | 17:18:07 | AUDCHF | BUY | 3.50 | 0.54266 | 0.54218 | -$216.57 | CHOP | momentum_buy (bearish candle entry) |
-| 26 | 17:50:24 | USDCHF | BUY | 11.01 | 0.77965 | 0.77989 | +$337.13 | TP | pa_buy - at_support+engulfing |
-| 27 | 17:59:58 | USDCHF | BUY | 11.10 | 0.77980 | 0.78008 | +$396.43 | TP | pa_buy - wick_rejection |
+| # | Time (MT5) | Symbol | Side | Lots | Entry | Exit | P&L |
+|---|------------|--------|------|------|-------|------|-----|
+| 1 | 01:09:52 | EURUSD | SELL | 1.24 | 1.18406 | 1.18422 | -$19.84 |
+| 2 | 01:11:49 | EURUSD | SELL | 1.24 | 1.18392 | 1.18428 | -$44.64 |
+| 3 | 01:22:12 | EURUSD | SELL | 1.24 | 1.18391 | 1.18439 | -$59.52 |
+| 4 | 04:01:10 | EURUSD | BUY | 1.24 | 1.18741 | 1.18691 | -$62.00 |
+| 5 | 04:46:45 | USDCAD | BUY | 16.37 | 1.36320 | 1.36296 | -$289.69 |
+| 6 | 04:56:53 | EURUSD | BUY | 1.23 | 1.18753 | 1.18686 | -$82.41 |
+| 7 | 04:49:46 | USDCAD | BUY | 16.37 | 1.36372 | 1.36377 | +$59.72 |
+| 8 | 04:56:17 | USDCAD | BUY | 16.37 | 1.36404 | 1.36430 | +$310.41 |
+| 9 | 05:15:37 | EURUSD | SELL | 16.37 | 1.18641 | 1.18691 | -$818.50 |
+| 10 | 05:19:04 | EURUSD | SELL | 16.37 | 1.18674 | 1.18725 | -$834.87 |
+| 11 | 05:22:07 | EURUSD | BUY | 13.09 | 1.18727 | 1.18698 | -$379.61 |
+| 12 | 06:28:13 | EURUSD | BUY | 15.28 | 1.18653 | 1.18603 | -$764.00 |
+| 13 | 07:04:44 | USDCAD | BUY | 16.41 | 1.36457 | 1.36491 | +$406.73 |
+| 14 | 09:53:47 | AUDUSD | SELL | 15.16 | 0.69389 | 0.69429 | -$606.40 |
+| 15 | 11:05:10 | AUDUSD | SELL | 14.97 | 0.69436 | 0.69482 | -$688.62 |
+| 16 | 11:15:01 | AUDUSD | SELL | 11.80 | 0.69463 | 0.69433 | +$354.00 |
+| 17 | 10:57:03 | EURUSD | BUY | 1.17 | 1.18473 | 1.18594 | -$141.57 |
+| 18 | 12:39:04 | USDCAD | SELL | 8.08 | 1.36342 | 1.36406 | -$381.00 |
+| 19 | 13:12:12 | AUDUSD | SELL | 14.69 | 0.69564 | 0.69604 | -$587.60 |
+| 20 | 14:39:01 | USDCAD | BUY | 7.92 | 1.36398 | 1.36356 | -$245.17 |
+| 21 | 16:48:02 | USDCHF | BUY | 3.50 | 0.77888 | 0.77893 | +$22.36 |
+| 22 | 16:55:12 | USDCHF | BUY | 3.50 | 0.77878 | 0.77883 | +$22.36 |
+| 23 | 17:00:12 | USDCHF | BUY | 3.50 | 0.77993 | 0.77997 | +$17.86 |
+| 24 | 17:10:49 | USDCHF | BUY | 3.50 | 0.78022 | 0.78026 | +$17.85 |
+| 25 | 17:33:00 | AUDCHF | BUY | 2.50 | 0.54315 | 0.54325 | +$31.87 |
+| 26 | 17:47:08 | AUDCHF | BUY | 4.00 | 0.54286 | 0.54227 | -$303.78 |
+| 27 | 17:58:04 | AUDCHF | BUY | 4.00 | 0.54284 | 0.54250 | -$174.92 |
+| 28 | 18:09:17 | AUDCHF | BUY | 3.50 | 0.54288 | 0.54318 | +$133.90 |
+| 29 | 18:48:04 | USDCHF | BUY | 3.50 | 0.78031 | 0.78038 | +$31.23 |
+| 30 | 18:55:35 | USDCHF | BUY | 4.00 | 0.78050 | 0.77949 | -$520.88 |
+| 31 | 19:18:07 | AUDCHF | BUY | 3.50 | 0.54266 | 0.54218 | -$216.57 |
+| 32 | 19:50:24 | USDCHF | BUY | 11.01 | 0.77965 | 0.77989 | +$337.13 |
+| 33 | 19:59:58 | USDCHF | BUY | 11.10 | 0.77980 | 0.78008 | +$396.43 |
 
 ---
 
