@@ -707,16 +707,16 @@ class MarketIntelligence:
         if base_strength and quote_strength:
             strength_diff = base_strength.strength - quote_strength.strength
 
-            # If base is weaker than quote
-            if strength_diff < -20:  # Significant weakness
+            # If base is weaker than quote (threshold lowered to 5 for tighter filtering)
+            if strength_diff < -5:  # Base currency is weaker
                 if direction == "BUY":
-                    return False, f"BUY blocked: {base_currency} weak ({base_strength.strength:.0f}) vs {quote_currency} strong ({quote_strength.strength:.0f})"
+                    return False, f"BUY blocked: {base_currency} weak ({base_strength.strength:.1f}) vs {quote_currency} strong ({quote_strength.strength:.1f})"
                 # SELL is good - we're shorting the weak currency
 
             # If base is stronger than quote
-            elif strength_diff > 20:  # Significant strength
+            elif strength_diff > 5:  # Base currency is stronger
                 if direction == "SELL":
-                    return False, f"SELL blocked: {base_currency} strong ({base_strength.strength:.0f}) vs {quote_currency} weak ({quote_strength.strength:.0f})"
+                    return False, f"SELL blocked: {base_currency} strong ({base_strength.strength:.1f}) vs {quote_currency} weak ({quote_strength.strength:.1f})"
                 # BUY is good - we're buying the strong currency
 
         return True, "Trade aligns with market context"
