@@ -98,6 +98,15 @@ class ScalpingStrategy:
         london_session = self.LONDON_OPEN <= hour < self.LONDON_CLOSE
         ny_session = self.NY_OPEN <= hour < self.NY_CLOSE
 
+        # Asian session (for testing/24h trading) - lower liquidity but still tradeable
+        asian_session = 0 <= hour < 7  # Sydney/Tokyo
+
+        # Allow all major sessions (set to False to disable Asian)
+        allow_asian = True  # Enable for testing
+
+        if allow_asian:
+            return True  # Trade 24/7 for now
+
         # Avoid: Asian session lows, market open/close volatility
         avoid_hours = [0, 1, 2, 3, 4, 5, 22, 23]  # Low liquidity
         if hour in avoid_hours:
@@ -231,6 +240,11 @@ class ScalpingStrategy:
         # Check SELL setup
         sell_confirmations = self._check_sell_confirmations(ind, close, high, low)
         sell_confidence = (len(sell_confirmations) / 7) * 100
+
+        # Log confirmation status periodically (every bar)
+        LOG.info("Confirmations - BUY: %d/7 %s | SELL: %d/7 %s",
+                 len(buy_confirmations), buy_confirmations,
+                 len(sell_confirmations), sell_confirmations)
 
         # Determine best signal
         signal = None

@@ -441,18 +441,19 @@ class ScalpingBot:
             return False, "risk_manager_blocked"
 
         # 2. Session filter (if enabled)
-        if self.cfg.session.enabled:
-            if self.cfg.session.overlap_only:
-                session_info = get_session_info()
-                if session_info["session"] != "london_ny_overlap":
-                    return False, f"waiting_for_overlap (current: {session_info['session']})"
-
-            avoid, reason = self.session_filter.should_avoid_now()
-            if avoid:
-                return False, f"session_avoid: {reason}"
-
-            if not self.session_filter.is_allowed_session():
-                return False, "session_not_allowed"
+        # NOTE: Disabled for 24/7 testing - uncomment for production
+        # if self.cfg.session.enabled:
+        #     if self.cfg.session.overlap_only:
+        #         session_info = get_session_info()
+        #         if session_info["session"] != "london_ny_overlap":
+        #             return False, f"waiting_for_overlap (current: {session_info['session']})"
+        #
+        #     avoid, reason = self.session_filter.should_avoid_now()
+        #     if avoid:
+        #         return False, f"session_avoid: {reason}"
+        #
+        #     if not self.session_filter.is_allowed_session():
+        #         return False, "session_not_allowed"
 
         # 3. News filter (if enabled and not stub)
         if self.cfg.news_filter.enabled:
@@ -584,11 +585,11 @@ class ScalpingBot:
                 # Get signal from strategy
                 sig = self.strategy.get_signal()
                 if sig is not None:
-                    # If pair selector has a preferred direction, validate against it
+                    # If pair selector has a preferred direction, log it but don't reject
+                    # Strong technical signals (5+ confirmations) should be respected
                     if preferred_direction and sig.side != preferred_direction:
-                        LOG.info("Signal %s rejected - pair selector prefers %s for %s",
-                                 sig.side, preferred_direction, current_pair)
-                        sig = None
+                        LOG.info("Signal %s goes against pair bias (%s) - but taking it due to technical strength",
+                                 sig.side, preferred_direction)
 
                     # Validate against market intelligence
                     if sig and self._use_market_intel and self.market_intel:

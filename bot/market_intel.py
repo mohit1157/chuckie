@@ -698,22 +698,20 @@ class MarketIntelligence:
         if symbol in context.avoid_pairs:
             return False, f"{symbol} unfavorable in current market regime"
 
-        # Check currency strength alignment
-        base = symbol[:3]
-        quote = symbol[3:6]
-
-        base_strength = context.currency_strengths.get(base)
-        quote_strength = context.currency_strengths.get(quote)
-
-        if base_strength and quote_strength:
-            if direction == "BUY":
-                # For BUY, we want base stronger than quote
-                if base_strength.rank > quote_strength.rank + 2:
-                    return False, f"Currency strength disagrees: {base} weaker than {quote}"
-            else:
-                # For SELL, we want quote stronger than base
-                if quote_strength.rank > base_strength.rank + 2:
-                    return False, f"Currency strength disagrees: {quote} weaker than {base}"
+        # Currency strength check DISABLED for now
+        # Technical signals with 5+ confirmations are trusted
+        # The pair selector already considers currency strength in scoring
+        # Uncomment below to re-enable strict currency strength filtering
+        #
+        # base = symbol[:3]
+        # quote = symbol[3:6]
+        # base_strength = context.currency_strengths.get(base)
+        # quote_strength = context.currency_strengths.get(quote)
+        # if base_strength and quote_strength:
+        #     if direction == "BUY" and base_strength.rank > quote_strength.rank + 5:
+        #         return False, f"Currency strength disagrees: {base} much weaker than {quote}"
+        #     if direction == "SELL" and quote_strength.rank > base_strength.rank + 5:
+        #         return False, f"Currency strength disagrees: {quote} much weaker than {base}"
 
         return True, "Trade aligns with market context"
 
