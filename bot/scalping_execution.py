@@ -13,7 +13,7 @@ import logging
 import re
 import numpy as np
 from dataclasses import dataclass
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
 import MetaTrader5 as mt5
 
@@ -539,6 +539,123 @@ class ScalpingExecutionEngine:
         self._calculate_support_resistance()
 
         return True
+
+    def execute_signal_with_ticket(self, sig: Signal, dynamic_sl: float = None,
+                                    dynamic_tp: float = None) -> Tuple[bool, Optional[int]]:
+        """
+        Execute a trading signal and return (success, ticket).
+
+        Same as execute_signal but returns the ticket for trade management.
+        """
+        info = self.mt5.symbol_info(self.cfg.symbol)
+        tick = self.mt5.symbol_info_tick(self.cfg.symbol)
+        if info is None or tick is None:
+            LOG.error("Cannot get symbol info for %s", self.cfg.symbol)
+            return False, None
+
+        sl_pips = dynamic_sl if dynamic_sl else self.cfg.trade.sl_pips
+        tp_pips = dynamic_tp if dynamic_tp else self.cfg.trade.tp_pips
+
+        lots = self.risk.calc_lot_size(sl_pips)
+
+        # Apply size multiplier from signal (for counter-trend trades)
+        size_multiplier = getattr(sig, 'size_multiplier', 1.0)
+        if size_multiplier < 1.0:
+            original_lots = lots
+            lots = lots * size_multiplier
+            trade_type = getattr(sig, 'trade_type', 'with_trend')
+            LOG.info("Adaptive sizing [%s]: %.2f lots -> %.2f lots (%.0f%%)",
+                     trade_type, original_lots, lots, size_multiplier * 100)
+        if lots <= 0:
+            LOG.error("Invalid lot size calculated: %.4f", lots)
+            return False, None
+
+        pip_in_price = info.point * 10.0
+        sl_dist = sl_pips * pip_in_price
+        tp_dist = tp_pips * pip_in_price
+
+        if sig.side == "BUY":
+            price = tick.ask
+            sl = price - sl_dist
+            tp = price + tp_dist
+            order_type = mt5.ORDER_TYPE_BUY
+        else:
+            price = tick.bid
+            sl = price + sl_dist
+            tp = price - tp_dist
+            order_type = mt5.ORDER_TYPE_SELL
+
+        safe_comment = re.sub(r'[^a-zA-Z0-9]', '', sig.reason)[:20]
+        LOG.info("Order comment: original='%s' -> sanitized='%s'", sig.reason, safe_comment)
+
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": self.cfg.symbol,
+            "volume": float(lots),
+            "type": order_type,
+            "price": float(price),
+            "sl": float(sl),
+            "tp": float(tp),
+            "deviation": 10,
+            "magic": self.cfg.magic,
+            "comment": safe_comment,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        LOG.info("Order request: %s %s %.2f lots @ %.5f SL=%.5f TP=%.5f",
+                 sig.side, self.cfg.symbol, lots, price, sl, tp)
+
+        check = self.mt5.order_check(req)
+        if check is None:
+            error = mt5.last_error()
+            LOG.error("Order check returned None - symbol may not be enabled. Error: %s", error)
+            if not mt5.symbol_select(self.cfg.symbol, True):
+                LOG.error("Failed to enable symbol %s", self.cfg.symbol)
+            return False, None
+        if check.retcode != 0:
+            LOG.error("Order check failed: retcode=%s comment=%s", check.retcode, getattr(check, 'comment', ''))
+            return False, None
+
+        res = self.mt5.order_send(req)
+        if res is None:
+            LOG.error("Order send failed: %s", self.mt5.last_error())
+            return False, None
+
+        if res.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED, mt5.TRADE_RETCODE_DONE_PARTIAL):
+            LOG.error("Order rejected: retcode=%s comment=%s", res.retcode, getattr(res, "comment", ""))
+            return False, None
+
+        LOG.info("Order executed: %s %.2f lots @ %.5f | SL=%.5f TP=%.5f | reason=%s",
+                 sig.side, lots, price, sl, tp, sig.reason)
+
+        trade_id = self.logger.log_entry(
+            symbol=self.cfg.symbol,
+            side=sig.side,
+            lots=lots,
+            entry_price=price,
+            sl_price=sl,
+            tp_price=tp,
+            reason=sig.reason,
+            magic=self.cfg.magic,
+            ticket=res.order
+        )
+
+        # Track position state
+        self._positions[res.order] = PositionState(
+            ticket=res.order,
+            trade_id=trade_id,
+            entry_price=price,
+            entry_time=datetime.now(timezone.utc),
+            side=sig.side,
+            initial_volume=lots,
+            partial_taken=False,
+            sl_locked_at_profit=False,
+        )
+
+        self._calculate_support_resistance()
+
+        return True, res.order
 
     def manage_positions(self):
         """

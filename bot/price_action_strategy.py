@@ -84,6 +84,14 @@ class PriceActionStrategy:
         self.counter_trend_tp_multiplier = 0.5  # Smaller TP for counter-trend (quick scalp)
         self.with_trend_tp_multiplier = 1.5  # Larger TP for with-trend (let it run)
 
+        # Tick-level monitoring (watch forming candle)
+        self._forming_candle_open: Optional[float] = None
+        self._forming_candle_high: float = 0.0
+        self._forming_candle_low: float = float('inf')
+        self._tick_count: int = 0
+        self._buyer_pressure: float = 0.5  # 0=sellers, 1=buyers
+        self._last_tick_price: Optional[float] = None
+
     def set_currency_bias(self, direction: Optional[str], strength: float = 0.0):
         """Set the currency strength bias for trade classification."""
         self._currency_bias = direction
@@ -101,6 +109,109 @@ class PriceActionStrategy:
         from datetime import timedelta
         self._cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
         LOG.info("Cooldown set for %d minutes", minutes)
+
+    def update_tick(self, price: float):
+        """
+        Update tick-level analysis for the forming candle.
+
+        This watches how the candle is forming in real-time:
+        - Track buyer/seller pressure
+        - Detect if price is being rejected at a level
+        - See momentum building before candle closes
+
+        Good traders watch the tape, not just the closed candles.
+        """
+        # Initialize forming candle on first tick
+        if self._forming_candle_open is None:
+            self._forming_candle_open = price
+            self._forming_candle_high = price
+            self._forming_candle_low = price
+
+        # Update high/low
+        self._forming_candle_high = max(self._forming_candle_high, price)
+        self._forming_candle_low = min(self._forming_candle_low, price)
+        self._tick_count += 1
+
+        # Calculate buyer/seller pressure based on tick direction
+        if self._last_tick_price is not None:
+            if price > self._last_tick_price:
+                # Uptick - buyers
+                self._buyer_pressure = self._buyer_pressure * 0.9 + 0.1
+            elif price < self._last_tick_price:
+                # Downtick - sellers
+                self._buyer_pressure = self._buyer_pressure * 0.9
+
+        self._last_tick_price = price
+
+    def reset_forming_candle(self):
+        """Reset forming candle tracking when new candle starts."""
+        self._forming_candle_open = None
+        self._forming_candle_high = 0.0
+        self._forming_candle_low = float('inf')
+        self._tick_count = 0
+        self._buyer_pressure = 0.5
+        self._last_tick_price = None
+
+    def get_forming_candle_analysis(self) -> dict:
+        """
+        Get analysis of the currently forming candle.
+
+        Returns dict with:
+        - direction: "bullish", "bearish", or "doji"
+        - wick_developing: "upper", "lower", "both", or "none"
+        - buyer_pressure: 0.0 to 1.0
+        - tick_count: number of ticks
+        """
+        if self._forming_candle_open is None:
+            return {"direction": "unknown", "wick_developing": "none",
+                    "buyer_pressure": 0.5, "tick_count": 0}
+
+        # Current price is last tick
+        current_price = self._last_tick_price or self._forming_candle_open
+        candle_range = self._forming_candle_high - self._forming_candle_low
+
+        if candle_range == 0:
+            return {"direction": "doji", "wick_developing": "none",
+                    "buyer_pressure": self._buyer_pressure, "tick_count": self._tick_count}
+
+        # Calculate body
+        body_top = max(self._forming_candle_open, current_price)
+        body_bottom = min(self._forming_candle_open, current_price)
+        body_size = body_top - body_bottom
+
+        # Calculate wicks
+        upper_wick = self._forming_candle_high - body_top
+        lower_wick = body_bottom - self._forming_candle_low
+
+        # Determine direction
+        if current_price > self._forming_candle_open:
+            direction = "bullish"
+        elif current_price < self._forming_candle_open:
+            direction = "bearish"
+        else:
+            direction = "doji"
+
+        # Determine wick developing
+        upper_wick_ratio = upper_wick / candle_range if candle_range > 0 else 0
+        lower_wick_ratio = lower_wick / candle_range if candle_range > 0 else 0
+
+        if upper_wick_ratio > 0.3 and lower_wick_ratio > 0.3:
+            wick_developing = "both"
+        elif upper_wick_ratio > 0.3:
+            wick_developing = "upper"
+        elif lower_wick_ratio > 0.3:
+            wick_developing = "lower"
+        else:
+            wick_developing = "none"
+
+        return {
+            "direction": direction,
+            "wick_developing": wick_developing,
+            "buyer_pressure": self._buyer_pressure,
+            "tick_count": self._tick_count,
+            "upper_wick_ratio": upper_wick_ratio,
+            "lower_wick_ratio": lower_wick_ratio
+        }
 
     def get_signal(self) -> Optional[Signal]:
         """

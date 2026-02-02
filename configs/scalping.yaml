@@ -21,8 +21,8 @@ trade:
   tp_pips: 22   # Larger TP for 1.5:1 R:R
   trailing_stop:
     enabled: true
-    start_pips: 10  # Start trailing after 10 pips profit
-    trail_pips: 7   # Trail by 7 pips
+    start_pips: 5   # Start trailing earlier (was 10 - too late)
+    trail_pips: 3   # Trail tighter (was 7 - gave back too much)
   # Advanced exit rules
   exit_on_ema_cross: true      # Exit if 2+ candles close below EMA(9)
   exit_on_structure_break: false # Disabled

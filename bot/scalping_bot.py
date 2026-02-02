@@ -32,6 +32,7 @@ from .risk import RiskManager
 from .trade_logger import TradeLogger
 from .session_filter import SessionFilter, get_session_info
 from .market_intel import MarketIntelligence
+from .trade_manager import SmartTradeManager
 import logging
 import MetaTrader5 as mt5
 
@@ -357,6 +358,9 @@ class ScalpingBot:
 
         self.execution = ScalpingExecutionEngine(cfg, self.mt5, self.risk, self.logger)
 
+        # Smart trade manager - manages trades like a professional
+        self.trade_manager = SmartTradeManager(self.mt5, cfg)
+
         # Stats
         self._trades_today = 0
         self._last_report_hour = -1
@@ -483,6 +487,30 @@ class ScalpingBot:
 
         return True, "ok"
 
+    def _manage_trades_like_pro(self):
+        """
+        Manage open trades like a professional trader would.
+
+        Uses the SmartTradeManager to:
+        - Move to breakeven after 3 pips profit
+        - Trail stop aggressively
+        - Exit on reversal candles
+        - Exit if momentum fades
+        - Exit if trade chops too long
+        """
+        actions = self.trade_manager.manage_all_trades()
+
+        for ticket, action in actions:
+            if action.startswith("close_"):
+                # Smart manager wants to close this trade
+                reason = action.replace("close_", "")
+                success = self.trade_manager.close_trade(ticket, reason)
+                if success:
+                    LOG.info("Smart exit: ticket=%d reason=%s", ticket, reason)
+            elif action == "update_sl":
+                # SL was updated - already logged by trade manager
+                pass
+
     def _log_hourly_report(self):
         """Log hourly performance report."""
         now = datetime.now(timezone.utc)
@@ -569,7 +597,10 @@ class ScalpingBot:
                 # Sync positions (detect closes)
                 self.execution.sync_open_positions()
 
-                # Manage open positions (trailing, breakeven)
+                # Smart trade management - like a professional trader
+                self._manage_trades_like_pro()
+
+                # Manage open positions (trailing, breakeven) - legacy
                 self.execution.manage_positions()
 
                 # Check and update best pair periodically
@@ -627,10 +658,32 @@ class ScalpingBot:
                                      size_multiplier * 100)
 
                     # Execute trade
-                    success = self.execution.execute_signal(sig, sl_pips, tp_pips)
-                    if success:
+                    success, ticket = self.execution.execute_signal_with_ticket(sig, sl_pips, tp_pips)
+                    if success and ticket:
                         self._trades_today += 1
                         LOG.info("Trade #%d today executed on %s", self._trades_today, self.cfg.symbol)
+
+                        # Register with smart trade manager
+                        tick = self.mt5.symbol_info_tick(self.cfg.symbol)
+                        info = self.mt5.symbol_info(self.cfg.symbol)
+                        if tick and info:
+                            pip_value = info.point * 10
+                            entry_price = tick.ask if sig.side == "BUY" else tick.bid
+                            sl_dist = sl_pips * pip_value
+                            tp_dist = tp_pips * pip_value
+                            sl = entry_price - sl_dist if sig.side == "BUY" else entry_price + sl_dist
+                            tp = entry_price + tp_dist if sig.side == "BUY" else entry_price - tp_dist
+                            lots = self.risk.calc_lot_size(sl_pips)
+
+                            self.trade_manager.register_trade(
+                                ticket=ticket,
+                                symbol=self.cfg.symbol,
+                                side=sig.side,
+                                entry_price=entry_price,
+                                sl=sl,
+                                tp=tp,
+                                volume=lots
+                            )
 
                 time.sleep(1.0)
 
