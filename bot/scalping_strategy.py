@@ -81,13 +81,19 @@ class ScalpingStrategy:
         self._last_signal_bar: Optional[int] = None
         self._cooldown_until: Optional[datetime] = None
 
+        # Anti-whipsaw protection - track last signal direction
+        self._last_signal_direction: Optional[str] = None
+        self._last_signal_datetime: Optional[datetime] = None
+        self._direction_lock_minutes = 10  # Don't flip direction within 10 minutes
+
         # Scalping parameters
         self.ema_fast = cfg.strategy.fast_ema if hasattr(cfg.strategy, 'fast_ema') else 9
         self.ema_slow = cfg.strategy.slow_ema if hasattr(cfg.strategy, 'slow_ema') else 21
         self.rsi_period = 14
         self.atr_period = 14
-        self.atr_sl_multiplier = 1.5  # SL = 1.5 * ATR
-        self.atr_tp_multiplier = 1.0  # TP = 1.0 * ATR (higher win rate, smaller TP)
+        # R:R ratio for profitability
+        self.atr_sl_multiplier = 1.0  # Base multiplier (will be doubled in get_dynamic_sl_tp)
+        self.atr_tp_multiplier = 1.5  # Base multiplier (1.5:1 R:R)
 
     def is_trading_session(self) -> bool:
         """Check if current time is during high-liquidity session."""
@@ -248,24 +254,44 @@ class ScalpingStrategy:
 
         # Determine best signal
         signal = None
+        potential_direction = None
 
         if len(buy_confirmations) >= self.MIN_CONFIRMATIONS and buy_confidence > sell_confidence:
-            self._last_signal_time = last_bar_time
+            potential_direction = "BUY"
             reason = f"scalp_buy|conf={buy_confidence:.0f}%|{','.join(buy_confirmations[:3])}"
-            signal = Signal(side="BUY", reason=reason)
-            LOG.info("BUY signal: %d/7 confirmations (%.1f%%): %s",
-                     len(buy_confirmations), buy_confidence, buy_confirmations)
 
         elif len(sell_confirmations) >= self.MIN_CONFIRMATIONS and sell_confidence > buy_confidence:
-            self._last_signal_time = last_bar_time
+            potential_direction = "SELL"
             reason = f"scalp_sell|conf={sell_confidence:.0f}%|{','.join(sell_confirmations[:3])}"
-            signal = Signal(side="SELL", reason=reason)
-            LOG.info("SELL signal: %d/7 confirmations (%.1f%%): %s",
-                     len(sell_confirmations), sell_confidence, sell_confirmations)
+
+        # Anti-whipsaw check: Don't flip direction within lock period
+        # This prevents the SELL->SELL->BUY pattern that caused all losses
+        if potential_direction:
+            now = datetime.now(timezone.utc)
+            if self._last_signal_direction and self._last_signal_datetime:
+                time_since_last = (now - self._last_signal_datetime).total_seconds() / 60
+                if potential_direction != self._last_signal_direction and time_since_last < self._direction_lock_minutes:
+                    LOG.info("ANTI-WHIPSAW: Blocking %s signal (last was %s %.1f min ago, lock=%d min)",
+                             potential_direction, self._last_signal_direction, time_since_last, self._direction_lock_minutes)
+                    return None
+
+            # Create the signal
+            self._last_signal_time = last_bar_time
+            self._last_signal_direction = potential_direction
+            self._last_signal_datetime = now
+
+            if potential_direction == "BUY":
+                signal = Signal(side="BUY", reason=reason)
+                LOG.info("BUY signal: %d/7 confirmations (%.1f%%): %s",
+                         len(buy_confirmations), buy_confidence, buy_confirmations)
+            else:
+                signal = Signal(side="SELL", reason=reason)
+                LOG.info("SELL signal: %d/7 confirmations (%.1f%%): %s",
+                         len(sell_confirmations), sell_confidence, sell_confirmations)
 
         if signal:
-            # Set cooldown to prevent overtrading
-            self.set_cooldown(minutes=3)
+            # Set cooldown to prevent overtrading (increased from 3 to 5 minutes)
+            self.set_cooldown(minutes=5)
 
         return signal
 
@@ -294,10 +320,13 @@ class ScalpingStrategy:
         atr_pips = current_atr / pip_value
 
         # Calculate SL and TP based on ATR
-        sl_pips = max(5, min(15, atr_pips * self.atr_sl_multiplier))  # Min 5, Max 15 pips
-        tp_pips = max(3, min(10, atr_pips * self.atr_tp_multiplier))  # Min 3, Max 10 pips
+        # CRITICAL: Min 10 pips SL to avoid noise-triggered stops (was 5, caused all losses)
+        # 5 pip SL is too tight - normal market noise triggered all stops
+        sl_pips = max(10, min(20, atr_pips * self.atr_sl_multiplier * 2))  # Min 10, Max 20 pips
+        tp_pips = max(15, min(30, atr_pips * self.atr_tp_multiplier * 2))  # Min 15, Max 30 pips (1.5:1 R:R)
 
-        LOG.debug("Dynamic SL/TP: ATR=%.1f pips, SL=%.1f, TP=%.1f", atr_pips, sl_pips, tp_pips)
+        LOG.info("Dynamic SL/TP: ATR=%.1f pips | SL=%.1f pips | TP=%.1f pips | R:R=1:%.1f",
+                 atr_pips, sl_pips, tp_pips, tp_pips/sl_pips if sl_pips > 0 else 0)
 
         return sl_pips, tp_pips
 

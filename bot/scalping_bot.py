@@ -26,6 +26,7 @@ from .monitoring import setup_logging, log_health
 from .mt5_client import MT5Client
 from .scalping_execution import ScalpingExecutionEngine
 from .scalping_strategy import ScalpingStrategy, ConservativeScalpingStrategy
+from .price_action_strategy import PriceActionStrategy
 from .news import NewsFilter
 from .risk import RiskManager
 from .trade_logger import TradeLogger
@@ -342,7 +343,12 @@ class ScalpingBot:
         self.pair_selector = None  # Initialized after market_intel
 
         # Choose strategy based on config
-        if cfg.strategy.min_confirmations >= 6:
+        strategy_name = getattr(cfg.strategy, 'name', 'high_probability_scalping')
+
+        if strategy_name == "price_action":
+            self.strategy = PriceActionStrategy(cfg, self.mt5)
+            LOG.info("Using PRICE ACTION strategy (S/R + candle patterns)")
+        elif cfg.strategy.min_confirmations >= 6:
             self.strategy = ConservativeScalpingStrategy(cfg, self.mt5)
             LOG.info("Using CONSERVATIVE strategy (6+ confirmations)")
         else:
@@ -377,7 +383,10 @@ class ScalpingBot:
         self.cfg.symbol = new_symbol
 
         # Recreate strategy with new symbol
-        if self.cfg.strategy.min_confirmations >= 6:
+        strategy_name = getattr(self.cfg.strategy, 'name', 'high_probability_scalping')
+        if strategy_name == "price_action":
+            self.strategy = PriceActionStrategy(self.cfg, self.mt5)
+        elif self.cfg.strategy.min_confirmations >= 6:
             self.strategy = ConservativeScalpingStrategy(self.cfg, self.mt5)
         else:
             self.strategy = ScalpingStrategy(self.cfg, self.mt5)
@@ -444,20 +453,12 @@ class ScalpingBot:
         if not self.risk.can_trade_now():
             return False, "risk_manager_blocked"
 
-        # 2. Session filter (if enabled)
-        # NOTE: Disabled for 24/7 testing - uncomment for production
-        # if self.cfg.session.enabled:
-        #     if self.cfg.session.overlap_only:
-        #         session_info = get_session_info()
-        #         if session_info["session"] != "london_ny_overlap":
-        #             return False, f"waiting_for_overlap (current: {session_info['session']})"
-        #
-        #     avoid, reason = self.session_filter.should_avoid_now()
-        #     if avoid:
-        #         return False, f"session_avoid: {reason}"
-        #
-        #     if not self.session_filter.is_allowed_session():
-        #         return False, "session_not_allowed"
+        # 2. Session filter - DISABLED per user feedback
+        # Good traders can profit in any session with proper price action
+        # The real problem was bad entries, not the session
+        # session_info = get_session_info()
+        # if session_info["score"] < 40:
+        #     return False, f"session_quality_low ({session_info['session']})"
 
         # 3. News filter (if enabled and not stub)
         if self.cfg.news_filter.enabled:
@@ -582,7 +583,7 @@ class ScalpingBot:
                 can_trade, reason = self._should_trade()
                 if not can_trade:
                     if loop_count % 30 == 0:  # Log every 30 seconds
-                        LOG.debug("Not trading: %s", reason)
+                        LOG.info("Not trading: %s", reason)  # Changed to INFO for visibility
                     time.sleep(1.0)
                     continue
 

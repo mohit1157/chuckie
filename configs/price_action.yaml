@@ -1,0 +1,58 @@
+# Price Action Trading Configuration
+# Trades like a professional - S/R levels, candle patterns, trend structure
+# No lagging indicators - pure price action
+
+mode: demo  # Change to 'live' for real trading
+symbol: "EURUSD"
+timeframe: "M3"  # 3-minute for scalping
+magic: 80808080  # Unique magic number for this strategy
+
+# Risk Management - Conservative for learning
+risk:
+  account_risk_per_trade: 0.02  # 2% per trade (safer while testing)
+  max_spread_points: 25  # Max 2.5 pips spread
+  max_open_positions: 1  # Only 1 position at a time
+  max_daily_loss_pct: 0.06  # Stop after 6% daily loss
+
+# Trade Parameters
+trade:
+  sl_pips: 15   # Fallback SL (strategy calculates dynamic)
+  tp_pips: 22   # Fallback TP (1.5:1 R:R)
+  trailing_stop:
+    enabled: true
+    start_pips: 10  # Start trailing after 10 pips profit
+    trail_pips: 7   # Trail by 7 pips
+  exit_on_ema_cross: false  # Not used in price action
+  exit_on_structure_break: false
+  partial_profit:
+    enabled: false
+
+# Strategy Configuration - PRICE ACTION
+strategy:
+  name: "price_action"  # This selects the PriceActionStrategy class
+  min_confirmations: 5  # Not used by price action, but kept for compatibility
+
+  # Price action specific settings
+  swing_lookback: 5  # Candles to confirm swing point
+  sr_touch_tolerance_pips: 3.0  # How close to S/R to consider "at level"
+  min_wick_ratio: 0.5  # Min wick/body ratio for rejection
+  min_rr_ratio: 1.5  # Minimum risk:reward
+  cooldown_minutes: 5  # Wait between trades
+
+# Session Filter
+session:
+  enabled: true
+  london_only: false
+  overlap_only: false
+  avoid_news_times: true
+
+# News Filter
+news_filter:
+  enabled: true
+  minutes_before: 30
+  minutes_after: 15
+  provider: "full"
+
+# Logging
+logging:
+  level: "INFO"

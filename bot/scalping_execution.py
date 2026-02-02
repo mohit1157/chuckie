@@ -39,6 +39,9 @@ class PositionState:
     initial_volume: float
     partial_taken: bool = False  # Has 80% been closed?
     sl_locked_at_profit: bool = False  # Has SL been moved to 15% profit?
+    ema_crosses_count: int = 0  # Count consecutive EMA crosses (need 2+ to exit)
+    min_hold_candles: int = 3  # Minimum candles to hold before EMA exit allowed
+    candles_held: int = 0  # Count of candles since entry
 
 
 class ScalpingExecutionEngine:
@@ -68,12 +71,17 @@ class ScalpingExecutionEngine:
         self._resistance_levels: Dict[str, float] = {}  # symbol -> resistance price
 
     def sync_open_positions(self):
-        """Synchronize open positions with trade logger."""
-        positions = self.mt5.positions_get(symbol=self.cfg.symbol)
+        """Synchronize open positions with trade logger.
+
+        NOTE: Gets ALL positions with this magic number, not just current symbol.
+        This ensures positions are tracked even after symbol switches.
+        """
+        # Get ALL positions with our magic number (not just current symbol)
+        all_positions = self.mt5.positions_get()
         current_tickets = set()
 
-        if positions:
-            for p in positions:
+        if all_positions:
+            for p in all_positions:
                 if p.magic == self.cfg.magic:
                     current_tickets.add(p.ticket)
 
@@ -145,34 +153,66 @@ class ScalpingExecutionEngine:
         """
         Check if position should be closed due to EMA cross.
 
-        BUY: Exit if candle closes BELOW EMA(9)
-        SELL: Exit if candle closes ABOVE EMA(9)
+        IMPROVED LOGIC:
+        - Requires minimum hold time (3 candles) before EMA exit can trigger
+        - Requires 2 consecutive candles on wrong side of EMA (not just 1)
+        - This prevents immediate exits after entry
+
+        BUY: Exit if 2+ candles close BELOW EMA(9)
+        SELL: Exit if 2+ candles close ABOVE EMA(9)
         """
         if not self.cfg.trade.exit_on_ema_cross:
+            return False
+
+        state = self._positions.get(position.ticket)
+        if state is None:
+            return False
+
+        # Minimum hold time check - don't exit too early
+        # Must hold for at least 3 candles (e.g., 9 minutes on M3)
+        if state.candles_held < state.min_hold_candles:
+            LOG.debug("EMA exit skipped: only held %d/%d candles",
+                     state.candles_held, state.min_hold_candles)
             return False
 
         ema9 = self._get_current_ema9()
         if ema9 is None:
             return False
 
-        # Get last closed candle
+        # Get last 3 closed candles to check for consecutive crosses
         rates = get_recent_bars(self.mt5, self.cfg.symbol, self.cfg.timeframe, n=5)
-        if rates is None or len(rates) < 2:
+        if rates is None or len(rates) < 4:
             return False
 
-        last_close = rates[-2]["close"]  # Previous completed candle
+        # Check last 2 completed candles (not current forming candle)
+        candle_1_close = rates[-2]["close"]  # Most recent completed
+        candle_2_close = rates[-3]["close"]  # Second most recent completed
 
         is_buy = (position.type == mt5.POSITION_TYPE_BUY)
 
-        if is_buy and last_close < ema9:
-            LOG.info("EMA EXIT: BUY position - candle closed below EMA9 (%.5f < %.5f)",
-                     last_close, ema9)
-            return True
-
-        if not is_buy and last_close > ema9:
-            LOG.info("EMA EXIT: SELL position - candle closed above EMA9 (%.5f > %.5f)",
-                     last_close, ema9)
-            return True
+        if is_buy:
+            # Need 2 consecutive candles closing below EMA9
+            if candle_1_close < ema9 and candle_2_close < ema9:
+                LOG.info("EMA EXIT: BUY position - 2 candles closed below EMA9 (%.5f, %.5f < %.5f)",
+                         candle_2_close, candle_1_close, ema9)
+                return True
+            elif candle_1_close < ema9:
+                # Only 1 candle below - increment counter but don't exit yet
+                state.ema_crosses_count = 1
+                LOG.debug("EMA WARNING: 1 candle below EMA9, waiting for confirmation")
+            else:
+                state.ema_crosses_count = 0  # Reset counter
+        else:  # SELL
+            # Need 2 consecutive candles closing above EMA9
+            if candle_1_close > ema9 and candle_2_close > ema9:
+                LOG.info("EMA EXIT: SELL position - 2 candles closed above EMA9 (%.5f, %.5f > %.5f)",
+                         candle_2_close, candle_1_close, ema9)
+                return True
+            elif candle_1_close > ema9:
+                state.ema_crosses_count = 1
+                LOG.debug("EMA WARNING: 1 candle above EMA9, waiting for confirmation")
+            else:
+                state.ema_crosses_count = 0
 
         return False
 
@@ -413,8 +453,9 @@ class ScalpingExecutionEngine:
             order_type = mt5.ORDER_TYPE_SELL
 
         # Sanitize comment - MT5 doesn't accept special characters like | % ,
-        # Use simple alphanumeric comment
-        safe_comment = re.sub(r'[^a-zA-Z0-9_]', '_', sig.reason)[:31]
+        # Use simple alphanumeric comment, max 20 chars to be safe
+        safe_comment = re.sub(r'[^a-zA-Z0-9]', '', sig.reason)[:20]
+        LOG.info("Order comment: original='%s' -> sanitized='%s'", sig.reason, safe_comment)
 
         req = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -492,42 +533,204 @@ class ScalpingExecutionEngine:
 
     def manage_positions(self):
         """
-        Manage open positions with advanced exit strategies:
-        1. Check EMA cross exit
-        2. Check structure break exit
-        3. Check partial profit taking
-        4. Apply trailing stop
+        Manage ALL open positions with this magic number (not just current symbol).
+        This ensures positions are managed even after symbol switches.
+
+        Advanced exit strategies:
+        1. Update candle counters for minimum hold time
+        2. Check EMA cross exit (requires 2 consecutive candles + min hold)
+        3. Check structure break exit
+        4. Check partial profit taking
+        5. Apply trailing stop
         """
-        positions = self.mt5.positions_get(symbol=self.cfg.symbol)
-        if not positions:
+        # Get ALL positions with our magic number (not just current symbol)
+        all_positions = self.mt5.positions_get()
+        if not all_positions:
             return
 
-        info = self.mt5.symbol_info(self.cfg.symbol)
-        tick = self.mt5.symbol_info_tick(self.cfg.symbol)
-        if info is None or tick is None:
-            return
-
-        for p in positions:
+        for p in all_positions:
             if p.magic != self.cfg.magic:
                 continue
 
-            # 1. Check EMA cross exit
-            if self._check_ema_exit(p):
-                self._close_position(p, "ema_cross_exit")
+            # Get symbol info for THIS position's symbol (may differ from cfg.symbol)
+            pos_symbol = p.symbol
+            info = self.mt5.symbol_info(pos_symbol)
+            tick = self.mt5.symbol_info_tick(pos_symbol)
+            if info is None or tick is None:
                 continue
 
-            # 2. Check structure break exit
-            if self._check_structure_break(p):
-                self._close_position(p, "structure_break")
-                continue
+            # Update candle counter for this position
+            state = self._positions.get(p.ticket)
+            if state:
+                # Calculate candles held based on time difference
+                tf_seconds = self._get_timeframe_seconds()
+                time_held = (datetime.now(timezone.utc) - state.entry_time).total_seconds()
+                state.candles_held = int(time_held / tf_seconds) if tf_seconds > 0 else 0
+
+            # 1. Check EMA cross exit (with min hold time protection)
+            # Only check EMA for current symbol (need bars data)
+            if pos_symbol == self.cfg.symbol:
+                if self._check_ema_exit(p):
+                    self._close_position_by_symbol(p, pos_symbol, "ema_cross_exit")
+                    continue
+
+                # 2. Check structure break exit
+                if self._check_structure_break(p):
+                    self._close_position_by_symbol(p, pos_symbol, "structure_break")
+                    continue
 
             # 3. Check partial profit taking
             if self._check_partial_profit(p):
-                self._close_partial_position(p, self.cfg.trade.partial_profit.close_pct)
+                self._close_partial_position_by_symbol(p, pos_symbol, self.cfg.trade.partial_profit.close_pct)
                 # Don't continue - still manage remaining position
 
             # 4. Apply trailing stop (standard logic)
-            self._apply_trailing_stop(p, info, tick)
+            self._apply_trailing_stop_by_symbol(p, pos_symbol, info, tick)
+
+    def _close_position_by_symbol(self, position, symbol: str, reason: str):
+        """Close a position completely, using the position's actual symbol."""
+        tick = self.mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return False
+
+        is_buy = (position.type == mt5.POSITION_TYPE_BUY)
+        close_price = tick.bid if is_buy else tick.ask
+        close_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+
+        # Sanitize comment for MT5
+        safe_reason = re.sub(r'[^a-zA-Z0-9_]', '_', reason)[:31]
+
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(position.volume),
+            "type": close_type,
+            "position": position.ticket,
+            "price": float(close_price),
+            "deviation": 10,
+            "magic": self.cfg.magic,
+            "comment": safe_reason,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        res = self.mt5.order_send(req)
+        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+            LOG.info("Position closed: ticket=%s symbol=%s reason=%s", position.ticket, symbol, reason)
+            return True
+        else:
+            LOG.error("Failed to close position: ticket=%s symbol=%s reason=%s", position.ticket, symbol, reason)
+            return False
+
+    def _close_partial_position_by_symbol(self, position, symbol: str, close_pct: float = 0.80):
+        """Close a percentage of the position using the position's actual symbol."""
+        info = self.mt5.symbol_info(symbol)
+        tick = self.mt5.symbol_info_tick(symbol)
+        if info is None or tick is None:
+            return False
+
+        # Calculate volume to close
+        volume_to_close = position.volume * close_pct
+        volume_to_close = max(info.volume_min, volume_to_close)
+        volume_to_close = (volume_to_close // info.volume_step) * info.volume_step
+
+        is_buy = (position.type == mt5.POSITION_TYPE_BUY)
+        close_price = tick.bid if is_buy else tick.ask
+        close_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+
+        req = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": symbol,
+            "volume": float(volume_to_close),
+            "type": close_type,
+            "position": position.ticket,
+            "price": float(close_price),
+            "deviation": 10,
+            "magic": self.cfg.magic,
+            "comment": "partial_close",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_FOK,
+        }
+
+        res = self.mt5.order_send(req)
+        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+            LOG.info("Partial close: ticket=%s symbol=%s volume=%.2f",
+                     position.ticket, symbol, volume_to_close)
+            state = self._positions.get(position.ticket)
+            if state:
+                state.partial_taken = True
+            return True
+        else:
+            LOG.error("Partial close failed: ticket=%s symbol=%s", position.ticket, symbol)
+            return False
+
+    def _apply_trailing_stop_by_symbol(self, position, symbol: str, info, tick):
+        """Apply trailing stop logic using the position's actual symbol."""
+        if not self.cfg.trade.trailing_stop.enabled:
+            return
+
+        pip_in_price = info.point * 10.0
+        start = self.cfg.trade.trailing_stop.start_pips * pip_in_price
+        trail = self.cfg.trade.trailing_stop.trail_pips * pip_in_price
+        breakeven_trigger = 5 * pip_in_price
+
+        is_buy = (position.type == mt5.POSITION_TYPE_BUY)
+        price = tick.bid if is_buy else tick.ask
+        moved = (price - position.price_open) if is_buy else (position.price_open - price)
+
+        # Check for breakeven (after 5 pips)
+        if moved >= breakeven_trigger and position.sl != 0:
+            be_level = position.price_open + (0.5 * pip_in_price) if is_buy else position.price_open - (0.5 * pip_in_price)
+            current_sl_profit = (position.sl - position.price_open) if is_buy else (position.price_open - position.sl)
+
+            if current_sl_profit < 0:
+                self._update_sl_by_symbol(position, symbol, be_level, info)
+                return
+
+        # Standard trailing stop
+        if moved < start:
+            return
+
+        new_sl = (price - trail) if is_buy else (price + trail)
+
+        if position.sl == 0.0:
+            tighten = True
+        else:
+            tighten = (new_sl > position.sl) if is_buy else (new_sl < position.sl)
+
+        if tighten:
+            self._update_sl_by_symbol(position, symbol, new_sl, info)
+
+    def _update_sl_by_symbol(self, position, symbol: str, new_sl: float, info):
+        """Update stop loss for a position using the position's actual symbol."""
+        new_sl = round(new_sl, info.digits)
+
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "symbol": symbol,
+            "position": position.ticket,
+            "sl": float(new_sl),
+            "tp": float(position.tp),
+            "magic": self.cfg.magic,
+            "comment": "trail"
+        }
+
+        res = self.mt5.order_send(req)
+        if res is None or res.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL):
+            LOG.warning("SL update failed: ticket=%s symbol=%s res=%s", position.ticket, symbol, res)
+        else:
+            LOG.info("SL updated: ticket=%s symbol=%s new_sl=%.5f", position.ticket, symbol, new_sl)
+
+    def _get_timeframe_seconds(self) -> int:
+        """Get timeframe duration in seconds."""
+        tf = self.cfg.timeframe.upper()
+        tf_map = {
+            "M1": 60, "M2": 120, "M3": 180, "M4": 240, "M5": 300,
+            "M6": 360, "M10": 600, "M12": 720, "M15": 900, "M20": 1200,
+            "M30": 1800, "H1": 3600, "H2": 7200, "H3": 10800, "H4": 14400,
+            "H6": 21600, "H8": 28800, "H12": 43200, "D1": 86400,
+        }
+        return tf_map.get(tf, 180)  # Default to M3
 
     def _apply_trailing_stop(self, position, info, tick):
         """Apply trailing stop logic."""
@@ -587,12 +790,12 @@ class ScalpingExecutionEngine:
             LOG.info("SL updated: ticket=%s new_sl=%.5f", position.ticket, new_sl)
 
     def close_all_positions(self, reason: str = "manual_close"):
-        """Close all open positions for this strategy."""
-        positions = self.mt5.positions_get(symbol=self.cfg.symbol)
-        if not positions:
+        """Close ALL open positions with this magic number (all symbols)."""
+        all_positions = self.mt5.positions_get()
+        if not all_positions:
             return
 
-        for p in positions:
+        for p in all_positions:
             if p.magic != self.cfg.magic:
                 continue
-            self._close_position(p, reason)
+            self._close_position_by_symbol(p, p.symbol, reason)

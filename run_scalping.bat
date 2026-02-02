@@ -5,6 +5,12 @@ echo   Targeting 80%+ Win Rate
 echo ========================================
 echo.
 
+REM Clear Python cache to ensure latest code is used
+if exist "bot\__pycache__" (
+    echo Clearing Python cache...
+    rmdir /s /q "bot\__pycache__"
+)
+
 REM Check if config argument provided
 if "%1"=="" (
     echo Using default config: configs/scalping.yaml
