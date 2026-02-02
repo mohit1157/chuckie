@@ -1225,8 +1225,10 @@ class PriceActionStrategy:
             return None  # Not touching EMA
 
         # SELL: Downtrend + price rallied up to touch EMA from below
+        # FIX 11: MUST have bearish momentum (price starting to fall) before selling
         if (trend in ["strong_downtrend", "downtrend"] and
             self._currency_bias == "SELL" and
+            momentum == "bearish" and  # FIX 11: Require momentum confirms direction!
             current_close <= current_ema):  # At or just below EMA
 
             # Confirm: Recent candles came UP to EMA (rally into resistance)
@@ -1245,11 +1247,10 @@ class PriceActionStrategy:
                 confidence = 0.60
                 if self._bias_strength >= 5.0:
                     confidence += 0.1
-                if momentum == "bearish":
-                    confidence += 0.05
+                confidence += 0.05  # Momentum already confirmed bearish
 
-                LOG.info("MA TOUCH SELL: EMA=%.5f, price=%.5f, distance=%.1f pips",
-                         current_ema, current_close, ema_distance_pips)
+                LOG.info("MA TOUCH SELL: EMA=%.5f, price=%.5f, distance=%.1f pips, momentum=%s",
+                         current_ema, current_close, ema_distance_pips, momentum)
 
                 return Signal(
                     side="SELL",
@@ -1263,8 +1264,10 @@ class PriceActionStrategy:
                 )
 
         # BUY: Uptrend + price dipped down to touch EMA from above
+        # FIX 11: MUST have bullish momentum (price starting to rise) before buying
         elif (trend in ["strong_uptrend", "uptrend"] and
               self._currency_bias == "BUY" and
+              momentum == "bullish" and  # FIX 11: Require momentum confirms direction!
               current_close >= current_ema):  # At or just above EMA
 
             # Confirm: Recent candles came DOWN to EMA (dip into support)
@@ -1283,11 +1286,10 @@ class PriceActionStrategy:
                 confidence = 0.60
                 if self._bias_strength >= 5.0:
                     confidence += 0.1
-                if momentum == "bullish":
-                    confidence += 0.05
+                confidence += 0.05  # Momentum already confirmed bullish
 
-                LOG.info("MA TOUCH BUY: EMA=%.5f, price=%.5f, distance=%.1f pips",
-                         current_ema, current_close, ema_distance_pips)
+                LOG.info("MA TOUCH BUY: EMA=%.5f, price=%.5f, distance=%.1f pips, momentum=%s",
+                         current_ema, current_close, ema_distance_pips, momentum)
 
                 return Signal(
                     side="BUY",
