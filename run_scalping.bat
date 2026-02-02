@@ -1,8 +1,13 @@
 @echo off
+REM Change to the directory where this batch file is located
+cd /d "%~dp0"
+
 echo ========================================
 echo   High-Probability Scalping Bot
 echo   Targeting 80%+ Win Rate
 echo ========================================
+echo.
+echo Working directory: %cd%
 echo.
 
 REM Clear Python cache to ensure latest code is used

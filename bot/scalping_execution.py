@@ -154,18 +154,28 @@ class ScalpingExecutionEngine:
         Check if position should be closed due to EMA cross.
 
         IMPROVED LOGIC:
+        - Only triggers when position is IN PROFIT (protect gains, not cut losses)
         - Requires minimum hold time (3 candles) before EMA exit can trigger
         - Requires 2 consecutive candles on wrong side of EMA (not just 1)
         - This prevents immediate exits after entry
 
-        BUY: Exit if 2+ candles close BELOW EMA(9)
-        SELL: Exit if 2+ candles close ABOVE EMA(9)
+        BUY: Exit if 2+ candles close BELOW EMA(9) AND in profit
+        SELL: Exit if 2+ candles close ABOVE EMA(9) AND in profit
         """
         if not self.cfg.trade.exit_on_ema_cross:
             return False
 
+        # CRITICAL FIX: Only use EMA exit when IN PROFIT
+        # EMA exit is designed to protect gains, not cut losses early
+        if position.profit <= 0:
+            LOG.debug("EMA exit skipped: position not in profit (%.2f)", position.profit)
+            return False
+
         state = self._positions.get(position.ticket)
+
+        # If no state (bot restarted), create one and skip this cycle
         if state is None:
+            LOG.debug("EMA exit skipped: no position state (bot may have restarted)")
             return False
 
         # Minimum hold time check - don't exit too early

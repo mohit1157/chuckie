@@ -104,6 +104,14 @@ class RiskManager:
         lots = (lots // step) * step
         lots = float(max(min_lot, lots))
 
+        # SAFETY CAP: Never trade more than 5 lots regardless of calculation
+        # This prevents catastrophic losses from calculation errors
+        MAX_SAFE_LOTS = 5.0
+        if lots > MAX_SAFE_LOTS:
+            LOG.warning("LOT SIZE CAPPED: Calculated %.2f lots, capping to %.2f for safety",
+                       lots, MAX_SAFE_LOTS)
+            lots = MAX_SAFE_LOTS
+
         # Check if we have enough margin for this position using MT5's actual margin calculation
         import MetaTrader5 as mt5
 

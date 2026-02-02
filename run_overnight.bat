@@ -1,8 +1,15 @@
 @echo off
+REM Change to the directory where this batch file is located
+cd /d "%~dp0"
+
+title OVERNIGHT SAFE Scalping Bot
+
 echo ========================================
 echo   OVERNIGHT SAFE Scalping Bot
 echo   Max Loss: 5%% | Risk per Trade: 2%%
 echo ========================================
+echo.
+echo Working directory: %cd%
 echo.
 
 REM Clear Python cache to ensure latest code is used
@@ -27,4 +34,6 @@ echo.
 
 .venv\Scripts\python.exe -m bot.scalping_bot --config %CONFIG%
 
-pause
+echo.
+echo Bot stopped. Press any key to close...
+pause >nul
