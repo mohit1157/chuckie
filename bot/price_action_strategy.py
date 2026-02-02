@@ -1510,7 +1510,8 @@ class PriceActionStrategy:
         3. ADX Check: Market must be trending (ADX > min_adx)
         4. Candle Confirmation: Require 2 consecutive candles in direction
         """
-        if not getattr(self.cfg.strategy, 'high_precision_mode', False):
+        # FIX 16: Default to True (was False - caused filter to be disabled!)
+        if not getattr(self.cfg.strategy, 'high_precision_mode', True):
             return True, "filters_disabled"
             
         # 1. Spread Check

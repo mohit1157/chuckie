@@ -48,6 +48,15 @@ strategy:
   cooldown_minutes: 5  # Wait 5 min between trades (was 3)
   strong_rejection_enabled: false  # FIX: Disabled due to 0% win rate
 
+  # FIX 16: High Precision Mode - MUST BE ENABLED
+  high_precision_mode: true       # Enable strict filtering for 85% win rate
+  min_adx: 20.0                   # Market must be trending (ADX > 20)
+  max_rsi_buy: 70.0               # Don't buy when overbought
+  min_rsi_buy: 40.0               # Don't buy when oversold
+  max_rsi_sell: 60.0              # Don't sell when oversold
+  min_rsi_sell: 30.0              # Don't sell when overbought
+  max_spread_pips: 2.0            # Max spread allowed (slightly relaxed from 1.5)
+
 # Session Filter - CRITICAL: Only trade during good sessions
 # Sydney session (score 10/100) caused all the losses!
 session:

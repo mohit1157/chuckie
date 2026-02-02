@@ -545,6 +545,10 @@ class ScalpingBot:
         LOG.info("  Initial Symbol: %s | Timeframe: %s", self.cfg.symbol, self.cfg.timeframe)
         LOG.info("  Strategy: %s | Min Confirmations: %d",
                  self.cfg.strategy.name, self.cfg.strategy.min_confirmations)
+        # FIX 16: Log critical settings to confirm they loaded
+        LOG.info("  High Precision Mode: %s", getattr(self.cfg.strategy, 'high_precision_mode', 'NOT SET'))
+        LOG.info("  Max Lot Size: %.1f", getattr(self.cfg.risk, 'max_lot_size', 5.0))
+        LOG.info("  Strong Rejection: %s", getattr(self.cfg.strategy, 'strong_rejection_enabled', 'NOT SET'))
         LOG.info("=" * 60)
 
         # Connect to MT5

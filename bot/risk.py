@@ -127,13 +127,20 @@ class RiskManager:
         lots = (lots // step) * step
         lots = float(max(min_lot, lots))
 
-        # SAFETY CAP: Never trade more than defined cap (default 3.0)
+        # FIX 16: SAFETY CAP - ALWAYS enforce max lot size (default 3.0)
         # This prevents catastrophic losses from calculation errors
         MAX_SAFE_LOTS = getattr(self.cfg.risk, 'max_lot_size', 3.0)
+        LOG.debug("Lot calculation: raw=%.2f, max_safe=%.1f", lots, MAX_SAFE_LOTS)
         if lots > MAX_SAFE_LOTS:
-            LOG.warning("LOT SIZE CAPPED: Calculated %.2f lots, capping to %.2f for safety",
+            LOG.warning("LOT SIZE CAPPED: Calculated %.2f lots, capping to %.1f for safety",
                        lots, MAX_SAFE_LOTS)
             lots = MAX_SAFE_LOTS
+
+        # Double-check: NEVER exceed 3.0 lots regardless of config (hard limit)
+        ABSOLUTE_MAX = 3.0
+        if lots > ABSOLUTE_MAX:
+            LOG.critical("HARD LOT LIMIT: %.2f exceeds absolute max %.1f - forcing cap!", lots, ABSOLUTE_MAX)
+            lots = ABSOLUTE_MAX
 
         # Check if we have enough margin for this position using MT5's actual margin calculation
         import MetaTrader5 as mt5

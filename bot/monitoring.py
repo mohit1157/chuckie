@@ -10,8 +10,11 @@ def setup_logging(level: str) -> None:
     log_level = getattr(logging, level.upper(), logging.INFO)
     log_format = "%(asctime)s %(levelname)s %(name)s | %(message)s"
 
-    # Create logs directory if it doesn't exist
-    logs_dir = Path("logs")
+    # FIX 16: Use absolute path to prevent logging to wrong directory
+    # Get the directory where this script is located (bot/)
+    bot_dir = Path(__file__).parent
+    project_dir = bot_dir.parent  # chuckie/chuckie/
+    logs_dir = project_dir / "logs"
     logs_dir.mkdir(exist_ok=True)
 
     # Generate log filename with timestamp
