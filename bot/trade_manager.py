@@ -82,6 +82,11 @@ class SmartTradeManager:
         self.min_progress_pips = 2.0           # Need 2 pips progress or exit
         self.reversal_candle_ratio = 0.6       # 60% body = strong reversal
 
+        # FIX 10: Early exit for losing trades that show no recovery
+        self.early_exit_loss_pips = 5.0        # If trade goes -5 pips...
+        self.early_exit_time_seconds = 120     # ...and stays negative for 2 minutes, close it
+        self._trade_went_negative_time: Dict[int, datetime] = {}  # Track when trade went negative
+
     def register_trade(self, ticket: int, symbol: str, side: str,
                        entry_price: float, sl: float, tp: float, volume: float):
         """Register a new trade for management."""
@@ -115,6 +120,7 @@ class SmartTradeManager:
             - "close_reversal" - Close due to reversal candle
             - "close_momentum" - Close due to fading momentum
             - "close_chop" - Close due to excessive chop
+            - "close_early_exit" - FIX 10: Close losing trade early
             - "update_sl" - SL was updated
             - "none" - No action taken
         """
@@ -177,6 +183,26 @@ class SmartTradeManager:
                 LOG.info("CHOP EXIT: ticket=%d candles=%d best_profit=%.1f pips - no progress",
                          trade.ticket, trade.candles_since_entry, trade.highest_profit_pips)
                 return "close_chop"
+
+        # FIX 10: Early exit for losing trades that show no recovery
+        # If trade is -5 pips or worse for 2+ minutes, cut losses
+        if profit_pips <= -self.early_exit_loss_pips:
+            now = datetime.now(timezone.utc)
+            if trade.ticket not in self._trade_went_negative_time:
+                self._trade_went_negative_time[trade.ticket] = now
+                LOG.warning("EARLY EXIT WATCH: ticket=%d at %.1f pips loss - starting timer",
+                           trade.ticket, profit_pips)
+            else:
+                time_negative = (now - self._trade_went_negative_time[trade.ticket]).total_seconds()
+                if time_negative >= self.early_exit_time_seconds:
+                    LOG.warning("EARLY EXIT: ticket=%d at %.1f pips loss for %.0f seconds - cutting losses",
+                               trade.ticket, profit_pips, time_negative)
+                    return "close_early_exit"
+        else:
+            # Trade recovered above threshold, reset timer
+            if trade.ticket in self._trade_went_negative_time:
+                del self._trade_went_negative_time[trade.ticket]
+                LOG.info("EARLY EXIT CANCELLED: ticket=%d recovered to %.1f pips", trade.ticket, profit_pips)
 
         # STEP 4: Breakeven management
         if not trade.breakeven_hit and profit_pips >= self.breakeven_trigger_pips:
