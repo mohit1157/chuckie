@@ -9,6 +9,7 @@ Much better than keyword matching for nuanced headlines like:
 import os
 import logging
 import hashlib
+import time
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ class OpenAISentimentAnalyzer:
         self._client = None
         self._initialized = False
         self._disabled = False  # Set to True if quota exceeded
+        self._last_request_time = 0.0  # Rate limiting
+        self._min_request_interval = 1.0  # 1 second between requests (Tier 1 = 3 RPM)
 
     def _init_client(self) -> bool:
         """Initialize OpenAI client."""
@@ -154,6 +157,12 @@ class OpenAISentimentAnalyzer:
                 currencies=[],
                 reasoning="OpenAI not available",
             )
+
+        # Rate limiting - wait if needed to avoid 429 errors
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self._min_request_interval:
+            time.sleep(self._min_request_interval - elapsed)
+        self._last_request_time = time.time()
 
         try:
             response = self._client.chat.completions.create(
