@@ -79,7 +79,7 @@ class PriceActionStrategy:
         self.swing_lookback = 5  # Candles to confirm a swing point
         self.sr_touch_tolerance_pips = 3.0  # How close price must be to S/R
         self.min_wick_ratio = 0.5  # Minimum wick/body ratio for rejection
-        self.min_rr_ratio = 1.5  # Minimum risk:reward ratio
+        self.min_rr_ratio = 1.2  # FIX 8: Conservative R:R for scalping (was 1.5)
 
         # Adaptive trade parameters
         self.counter_trend_size_multiplier = 0.4  # 40% size for counter-trend
