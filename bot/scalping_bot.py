@@ -136,24 +136,28 @@ class DynamicPairSelector:
         except Exception:
             return 50.0, "Volatility unknown"
 
-    def _get_spread_score(self, symbol: str) -> Tuple[float, str]:
-        """Get spread score based on current spread vs max allowed."""
+    def _get_spread_score(self, symbol: str) -> Tuple[float, str, int]:
+        """Get spread score based on current spread vs max allowed.
+
+        Returns:
+            (score, reason, actual_spread_points)
+        """
         try:
             info = self.mt5.symbol_info(symbol)
             if not info:
-                return 50.0, "Spread unknown"
+                return 50.0, "Spread unknown", 0
 
             spread_points = info.spread
             max_spread = self.cfg.risk.max_spread_points if self.cfg else 30
 
             if spread_points <= max_spread * 0.5:
-                return 100.0, f"Tight spread ({spread_points} pts)"
+                return 100.0, f"Tight spread ({spread_points} pts)", spread_points
             elif spread_points <= max_spread:
-                return 70.0, f"Acceptable spread ({spread_points} pts)"
+                return 70.0, f"Acceptable spread ({spread_points} pts)", spread_points
             else:
-                return 0.0, f"Wide spread ({spread_points} pts)"
+                return 0.0, f"Wide spread ({spread_points} pts)", spread_points
         except Exception:
-            return 50.0, "Spread unknown"
+            return 50.0, "Spread unknown", 0
 
     def get_best_pair(self, force_refresh: bool = False) -> Tuple[Optional[str], Optional[str], str]:
         """
@@ -204,7 +208,7 @@ class DynamicPairSelector:
         pair_scores = []
         LOG.info("=" * 60)
         LOG.info("PAIR SCORING (min threshold: %.0f)", self.MIN_SCORE_TO_TRADE)
-        LOG.info("%-8s %-4s %6s %6s %6s %6s %6s", "PAIR", "DIR", "TOTAL", "STR", "SENT", "VOL", "SPR")
+        LOG.info("%-8s %-4s %6s %6s %6s %6s %6s %6s", "PAIR", "DIR", "TOTAL", "STR", "SENT", "VOL", "SPR_SC", "SPR_PT")
         LOG.info("-" * 60)
 
         for pair in self._available_pairs:
@@ -236,7 +240,7 @@ class DynamicPairSelector:
             # Get other scores
             sentiment_score, sent_reason = self._get_sentiment_score(pair, direction)
             volatility_score, vol_reason = self._get_volatility_score(pair)
-            spread_score, spr_reason = self._get_spread_score(pair)
+            spread_score, spr_reason, actual_spread = self._get_spread_score(pair)
 
             # Note: Don't skip wide spread pairs - just give them low score
             # This way we still see them in the log
@@ -257,6 +261,7 @@ class DynamicPairSelector:
                 'sentiment': sentiment_score,
                 'volatility': volatility_score,
                 'spread': spread_score,
+                'actual_spread': actual_spread,
                 'reasons': [sent_reason, vol_reason, spr_reason]
             })
 
@@ -265,9 +270,10 @@ class DynamicPairSelector:
 
         # Log top pairs
         for ps in pair_scores[:6]:
-            LOG.info("%-8s %-4s %6.1f %6.0f %6.0f %6.0f %6.0f",
+            LOG.info("%-8s %-4s %6.1f %6.0f %6.0f %6.0f %6.0f %6d",
                      ps['pair'], ps['direction'], ps['total'],
-                     ps['strength'], ps['sentiment'], ps['volatility'], ps['spread'])
+                     ps['strength'], ps['sentiment'], ps['volatility'], ps['spread'],
+                     ps['actual_spread'])
         LOG.info("=" * 60)
 
         # Select best pair if it meets threshold

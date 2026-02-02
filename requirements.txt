@@ -6,8 +6,9 @@ requests==2.32.3
 tenacity==8.5.0
 numpy==1.26.4
 
-# OpenAI for AI-powered sentiment analysis
-openai==1.59.3
+# AI-powered sentiment analysis
+google-generativeai==0.8.4  # Gemini - recommended (free tier: 15 RPM)
+openai==1.59.3  # OpenAI - backup option
 
 # Optional: Reddit sentiment analysis
 # Uncomment if you want Reddit integration

@@ -1,25 +1,22 @@
 """
-OpenAI-powered sentiment analysis for forex news.
+Gemini-powered sentiment analysis for forex news.
 
-Uses GPT-4o-mini for accurate, context-aware sentiment analysis.
-Much better than keyword matching for nuanced headlines like:
-- "Fed pauses hikes despite strong data" (dovish, not hawkish)
-- "Dollar falls on profit-taking" (temporary, not bearish trend)
+Uses Gemini Flash for fast, accurate, context-aware sentiment analysis.
+Much cheaper than OpenAI and has generous free tier (15 RPM, 1M tokens/day).
 """
 import os
 import logging
 import hashlib
 import time
 from typing import Dict, List, Tuple, Optional
-from datetime import datetime, timezone
 from dataclasses import dataclass
 
-LOG = logging.getLogger("bot.openai_sentiment")
+LOG = logging.getLogger("bot.gemini_sentiment")
 
 
 @dataclass
 class SentimentResult:
-    """Result from OpenAI sentiment analysis."""
+    """Result from Gemini sentiment analysis."""
     headline: str
     sentiment: float  # -1 (very bearish) to +1 (very bullish)
     confidence: float  # 0-1 how confident the model is
@@ -28,12 +25,12 @@ class SentimentResult:
     cached: bool = False
 
 
-class OpenAISentimentAnalyzer:
+class GeminiSentimentAnalyzer:
     """
-    Analyze forex news sentiment using OpenAI GPT-4o-mini.
+    Analyze forex news sentiment using Google Gemini Flash.
 
     Features:
-    - Batch processing to reduce API calls
+    - Much cheaper than OpenAI (free tier: 15 RPM, 1M tokens/day)
     - Caching to avoid re-analyzing same headlines
     - Specific forex/currency focus
     - Returns sentiment per currency mentioned
@@ -44,35 +41,35 @@ class OpenAISentimentAnalyzer:
     _cache_max_size = 500
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self._client = None
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self._model = None
         self._initialized = False
-        self._disabled = False  # Set to True if quota exceeded
-        self._last_request_time = 0.0  # Rate limiting
-        self._min_request_interval = 2.5  # 2.5 seconds between requests to stay under Tier 1 limits
+        self._disabled = False
+        self._last_request_time = 0.0
+        self._min_request_interval = 4.0  # 15 RPM = 4 seconds between requests
 
     def _init_client(self) -> bool:
-        """Initialize OpenAI client."""
+        """Initialize Gemini client."""
         if self._initialized:
-            return self._client is not None
+            return self._model is not None
 
         self._initialized = True
 
         if not self.api_key:
-            LOG.warning("OpenAI API key not configured - falling back to keyword matching")
+            LOG.warning("Gemini API key not configured - falling back to keyword matching")
             return False
 
         try:
-            from openai import OpenAI
-            # Disable automatic retries to avoid 20-second waits
-            self._client = OpenAI(api_key=self.api_key, max_retries=0)
-            LOG.info("OpenAI sentiment analyzer initialized")
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            self._model = genai.GenerativeModel('gemini-2.0-flash')
+            LOG.info("Gemini sentiment analyzer initialized (gemini-2.0-flash)")
             return True
         except ImportError:
-            LOG.warning("openai package not installed - run: pip install openai")
+            LOG.warning("google-generativeai package not installed - run: pip install google-generativeai")
             return False
         except Exception as e:
-            LOG.warning("Failed to initialize OpenAI: %s", e)
+            LOG.warning("Failed to initialize Gemini: %s", e)
             return False
 
     def _get_cache_key(self, headline: str) -> str:
@@ -132,14 +129,14 @@ class OpenAISentimentAnalyzer:
         Returns:
             SentimentResult with sentiment score and metadata
         """
-        # Skip if disabled due to quota issues
+        # Skip if disabled
         if self._disabled:
             return SentimentResult(
                 headline=headline,
                 sentiment=0.0,
                 confidence=0.0,
                 currencies=[],
-                reasoning="OpenAI disabled (quota)",
+                reasoning="Gemini disabled",
             )
 
         # Check cache first
@@ -156,22 +153,16 @@ class OpenAISentimentAnalyzer:
                 sentiment=0.0,
                 confidence=0.0,
                 currencies=[],
-                reasoning="OpenAI not available",
+                reasoning="Gemini not available",
             )
 
-        # Rate limiting - wait if needed to avoid 429 errors
+        # Rate limiting
         elapsed = time.time() - self._last_request_time
         if elapsed < self._min_request_interval:
             time.sleep(self._min_request_interval - elapsed)
         self._last_request_time = time.time()
 
-        try:
-            response = self._client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a forex market sentiment analyzer. Analyze news headlines for their impact on currency values.
+        prompt = f"""You are a forex market sentiment analyzer. Analyze this news headline for its impact on currency values.
 
 Output format (exactly):
 SENTIMENT: <number from -1.0 to 1.0>
@@ -190,23 +181,17 @@ Consider:
 - Central bank policy (hawkish = bullish for currency, dovish = bearish)
 - Economic data (strong = bullish, weak = bearish)
 - Risk sentiment (risk-off = bullish for USD, JPY, CHF)
-- Political stability, trade relations, etc."""
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Analyze this forex headline:\n\n{headline}"
-                    }
-                ],
-                max_tokens=100,
-                temperature=0.1,  # Low temp for consistent analysis
-            )
+- Political stability, trade relations, etc.
 
-            response_text = response.choices[0].message.content
+Headline: {headline}"""
+
+        try:
+            response = self._model.generate_content(prompt)
+            response_text = response.text
             result = self._parse_response(response_text, headline)
 
             # Cache the result
             if len(self._cache) >= self._cache_max_size:
-                # Remove oldest entries (first 100)
                 keys_to_remove = list(self._cache.keys())[:100]
                 for key in keys_to_remove:
                     del self._cache[key]
@@ -221,17 +206,11 @@ Consider:
         except Exception as e:
             error_str = str(e)
 
-            # Check for quota/billing errors - disable to avoid repeated failures
-            if "insufficient_quota" in error_str or "exceeded your current quota" in error_str:
-                LOG.warning("OpenAI quota exceeded - disabling OpenAI sentiment for this session")
-                LOG.warning("Add billing at https://platform.openai.com/settings/organization/billing")
-                self._disabled = True
-            elif "429" in error_str or "rate_limit" in error_str.lower():
-                # Rate limited - increase delay and continue
-                LOG.debug("OpenAI rate limited, increasing delay")
-                self._min_request_interval = min(5.0, self._min_request_interval + 1.0)
+            if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower():
+                LOG.debug("Gemini rate limited, increasing delay")
+                self._min_request_interval = min(10.0, self._min_request_interval + 2.0)
             else:
-                LOG.warning("OpenAI analysis failed: %s", e)
+                LOG.warning("Gemini analysis failed: %s", e)
 
             return SentimentResult(
                 headline=headline,
@@ -242,16 +221,11 @@ Consider:
             )
 
     def analyze_headlines_batch(self, headlines: List[str]) -> List[SentimentResult]:
-        """
-        Analyze multiple headlines efficiently.
-
-        Uses caching to avoid redundant API calls.
-        """
+        """Analyze multiple headlines efficiently using caching."""
         results = []
         uncached = []
         uncached_indices = []
 
-        # Check cache for each headline
         for i, headline in enumerate(headlines):
             cache_key = self._get_cache_key(headline)
             if cache_key in self._cache:
@@ -262,34 +236,21 @@ Consider:
                 uncached.append(headline)
                 uncached_indices.append(i)
 
-        # Analyze uncached headlines
         for headline, idx in zip(uncached, uncached_indices):
             result = self.analyze_headline(headline)
             results.append((idx, result))
 
-        # Sort by original index and return
         results.sort(key=lambda x: x[0])
         return [r[1] for r in results]
 
     def get_currency_sentiment(self, headlines: List[str], currency: str) -> Tuple[float, int, float]:
-        """
-        Get aggregate sentiment for a specific currency from headlines.
-
-        Args:
-            headlines: List of news headlines
-            currency: Currency code (e.g., "USD", "EUR")
-
-        Returns:
-            (average_sentiment, article_count, average_confidence)
-        """
+        """Get aggregate sentiment for a specific currency."""
         results = self.analyze_headlines_batch(headlines)
-
         relevant = [r for r in results if currency in r.currencies]
 
         if not relevant:
             return 0.0, 0, 0.0
 
-        # Weight by confidence
         total_weight = sum(r.confidence for r in relevant)
         if total_weight == 0:
             avg_sentiment = sum(r.sentiment for r in relevant) / len(relevant)
@@ -304,26 +265,17 @@ Consider:
         """
         Get sentiment for a currency pair.
 
-        Args:
-            headlines: List of news headlines
-            symbol: Currency pair (e.g., "EURUSD")
-
         Returns:
             (sentiment_score, recommendation)
-            - Positive = bullish on the pair (buy)
-            - Negative = bearish on the pair (sell)
         """
-        base = symbol[:3]  # EUR in EURUSD
-        quote = symbol[3:]  # USD in EURUSD
+        base = symbol[:3]
+        quote = symbol[3:]
 
         base_sent, base_count, base_conf = self.get_currency_sentiment(headlines, base)
         quote_sent, quote_count, quote_conf = self.get_currency_sentiment(headlines, quote)
 
-        # Pair sentiment = base sentiment - quote sentiment
-        # If EUR is bullish (+0.5) and USD is bearish (-0.3), EURUSD sentiment = +0.8
         pair_sentiment = base_sent - quote_sent
 
-        # Determine recommendation
         if pair_sentiment > 0.2:
             recommendation = "bullish"
         elif pair_sentiment < -0.2:
@@ -331,7 +283,7 @@ Consider:
         else:
             recommendation = "neutral"
 
-        LOG.info("OpenAI Sentiment for %s: base(%s)=%.2f quote(%s)=%.2f -> pair=%.2f (%s)",
+        LOG.info("Gemini Sentiment for %s: base(%s)=%.2f quote(%s)=%.2f -> pair=%.2f (%s)",
                  symbol, base, base_sent, quote, quote_sent, pair_sentiment, recommendation)
 
         return pair_sentiment, recommendation
@@ -339,17 +291,16 @@ Consider:
     def log_analysis_report(self, headlines: List[str], symbol: str):
         """Log detailed sentiment analysis report."""
         results = self.analyze_headlines_batch(headlines)
-
         base = symbol[:3]
         quote = symbol[3:]
 
         LOG.info("=" * 60)
-        LOG.info("OPENAI SENTIMENT ANALYSIS: %s", symbol)
+        LOG.info("GEMINI SENTIMENT ANALYSIS: %s", symbol)
         LOG.info("=" * 60)
 
         relevant = [r for r in results if base in r.currencies or quote in r.currencies]
 
-        for r in relevant[:5]:  # Top 5 relevant
+        for r in relevant[:5]:
             cached_str = " (cached)" if r.cached else ""
             LOG.info("  [%.2f] %s%s", r.sentiment, r.headline[:60], cached_str)
             LOG.info("         -> %s | %s", r.currencies, r.reasoning)
@@ -361,12 +312,12 @@ Consider:
 
 
 # Singleton instance
-_analyzer: Optional[OpenAISentimentAnalyzer] = None
+_analyzer: Optional[GeminiSentimentAnalyzer] = None
 
 
-def get_openai_analyzer() -> OpenAISentimentAnalyzer:
-    """Get or create the singleton OpenAI analyzer."""
+def get_gemini_analyzer() -> GeminiSentimentAnalyzer:
+    """Get or create the singleton Gemini analyzer."""
     global _analyzer
     if _analyzer is None:
-        _analyzer = OpenAISentimentAnalyzer()
+        _analyzer = GeminiSentimentAnalyzer()
     return _analyzer

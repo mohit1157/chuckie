@@ -55,20 +55,34 @@ class NewsFilter:
             LOG.info("News filter: STUB mode (not blocking)")
             return
 
-        # Initialize OpenAI sentiment analyzer (RECOMMENDED - most accurate)
+        # Initialize Gemini sentiment analyzer (RECOMMENDED - free tier 15 RPM)
         try:
-            from .openai_sentiment import OpenAISentimentAnalyzer
+            from .gemini_sentiment import GeminiSentimentAnalyzer
 
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
-                self._openai_analyzer = OpenAISentimentAnalyzer(api_key=openai_key)
-                LOG.info("OpenAI sentiment analyzer: ENABLED (GPT-4o-mini)")
+            gemini_key = os.getenv("GEMINI_API_KEY")
+            if gemini_key:
+                self._openai_analyzer = GeminiSentimentAnalyzer(api_key=gemini_key)
+                LOG.info("Gemini sentiment analyzer: ENABLED (gemini-2.0-flash)")
             else:
-                LOG.info("OpenAI sentiment: DISABLED (set OPENAI_API_KEY for AI-powered analysis)")
+                LOG.info("Gemini sentiment: DISABLED (set GEMINI_API_KEY in .env)")
         except ImportError as e:
-            LOG.warning("OpenAI sentiment unavailable: %s", e)
+            LOG.warning("Gemini sentiment unavailable: %s", e)
         except Exception as e:
-            LOG.warning("Failed to initialize OpenAI analyzer: %s", e)
+            LOG.warning("Failed to initialize Gemini analyzer: %s", e)
+
+        # Fallback to OpenAI if Gemini not configured
+        if self._openai_analyzer is None:
+            try:
+                from .openai_sentiment import OpenAISentimentAnalyzer
+
+                openai_key = os.getenv("OPENAI_API_KEY")
+                openai_enabled = os.getenv("OPENAI_SENTIMENT_ENABLED", "0") == "1"
+
+                if openai_key and openai_enabled:
+                    self._openai_analyzer = OpenAISentimentAnalyzer(api_key=openai_key)
+                    LOG.info("OpenAI sentiment analyzer: ENABLED (GPT-4o-mini)")
+            except Exception:
+                pass  # Silent fallback
 
         try:
             from .news_provider import ComprehensiveNewsFilter
