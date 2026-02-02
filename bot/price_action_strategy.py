@@ -976,11 +976,12 @@ class PriceActionStrategy:
             atr_pips = atr / pip_value
 
             # Tighter stops for momentum trades (1.5x ATR)
-            sl_pips = max(8, min(20, atr_pips * 1.5))
+            sl_pips = max(8, min(15, atr_pips * 1.5))  # FIX 8: Cap SL at 15 pips for scalping
             sl_price = current_close + (sl_pips * pip_value)
 
-            # TP = 2x SL for momentum trades (ride the trend)
-            tp_pips = sl_pips * 2.0
+            # FIX 8: TP = 1.2x SL for scalping (quick wins, high win rate)
+            # Old: 2x SL was too aggressive, price often reversed before hitting TP
+            tp_pips = sl_pips * 1.2
             tp_price = current_close - (tp_pips * pip_value)
 
             confidence = 0.65 + (pattern_confidence * 0.2) + (min(self._bias_strength, 10) / 100)
@@ -1013,11 +1014,12 @@ class PriceActionStrategy:
             atr_pips = atr / pip_value
 
             # Tighter stops for momentum trades (1.5x ATR)
-            sl_pips = max(8, min(20, atr_pips * 1.5))
+            sl_pips = max(8, min(15, atr_pips * 1.5))  # FIX 8: Cap SL at 15 pips for scalping
             sl_price = current_close - (sl_pips * pip_value)
 
-            # TP = 2x SL for momentum trades
-            tp_pips = sl_pips * 2.0
+            # FIX 8: TP = 1.2x SL for scalping (quick wins, high win rate)
+            # Old: 2x SL was too aggressive, price often reversed before hitting TP
+            tp_pips = sl_pips * 1.2
             tp_price = current_close + (tp_pips * pip_value)
 
             confidence = 0.65 + (pattern_confidence * 0.2) + (min(self._bias_strength, 10) / 100)
@@ -1234,10 +1236,10 @@ class PriceActionStrategy:
                 atr = self._calculate_atr(highs, lows, period=14)
                 atr_pips = atr / pip_value
 
-                sl_pips = max(6, min(15, atr_pips * 1.2))
+                sl_pips = max(6, min(12, atr_pips * 1.2))  # FIX 8: Cap SL at 12 pips
                 sl_price = current_ema + (sl_pips * pip_value)
 
-                tp_pips = sl_pips * 1.5  # Slightly tighter TP for pullback trades
+                tp_pips = sl_pips * 1.2  # FIX 8: Quick scalp TP (was 1.5x)
                 tp_price = current_close - (tp_pips * pip_value)
 
                 confidence = 0.60
@@ -1272,10 +1274,10 @@ class PriceActionStrategy:
                 atr = self._calculate_atr(highs, lows, period=14)
                 atr_pips = atr / pip_value
 
-                sl_pips = max(6, min(15, atr_pips * 1.2))
+                sl_pips = max(6, min(12, atr_pips * 1.2))  # FIX 8: Cap SL at 12 pips
                 sl_price = current_ema - (sl_pips * pip_value)
 
-                tp_pips = sl_pips * 1.5
+                tp_pips = sl_pips * 1.2  # FIX 8: Quick scalp TP (was 1.5x)
                 tp_price = current_close + (tp_pips * pip_value)
 
                 confidence = 0.60
