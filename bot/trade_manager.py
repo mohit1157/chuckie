@@ -72,11 +72,12 @@ class SmartTradeManager:
         self.cfg = config
         self._trades: Dict[int, ManagedTrade] = {}
 
-        # Configuration - like a good trader would set
-        self.breakeven_trigger_pips = 3.0      # Move to BE after 3 pips
-        self.breakeven_buffer_pips = 0.5       # Lock in 0.5 pips at BE
-        self.trail_start_pips = 4.0            # Start trailing after 4 pips
-        self.trail_distance_pips = 2.0         # Trail 2 pips behind
+        # Configuration - optimized for scalping with 10-12 pip TP
+        # FIX 8b: Adjusted trailing to work with conservative TP targets
+        self.breakeven_trigger_pips = 4.0      # Move to BE after 4 pips (was 3)
+        self.breakeven_buffer_pips = 1.0       # Lock in 1 pip at BE (was 0.5)
+        self.trail_start_pips = 6.0            # Start trailing after 6 pips (was 4)
+        self.trail_distance_pips = 3.0         # Trail 3 pips behind (was 2)
         self.max_chop_candles = 10             # Exit if chopping for 10 candles
         self.min_progress_pips = 2.0           # Need 2 pips progress or exit
         self.reversal_candle_ratio = 0.6       # 60% body = strong reversal
