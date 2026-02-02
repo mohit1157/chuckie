@@ -412,100 +412,199 @@ class PriceActionStrategy:
     def _check_bullish_rejection(self, opens: np.ndarray, highs: np.ndarray,
                                   lows: np.ndarray, closes: np.ndarray) -> bool:
         """
-        Check for bullish rejection (long lower wick).
+        Check for STRONG bullish rejection (long lower wick).
 
-        Bullish rejection = price went down but buyers pushed it back up
-        Shows as candle with long lower wick relative to body.
+        A good scalper looks for:
+        1. Long lower wick (at least 2x the body)
+        2. Close near the high of the candle (buyers in control at close)
+        3. The candle should be complete (we only check closed candles)
+
+        Bullish rejection = price went down but buyers pushed it back up DECISIVELY
         """
-        # Check last 2 candles
-        for i in [-1, -2]:
-            body = abs(closes[i] - opens[i])
-            lower_wick = min(opens[i], closes[i]) - lows[i]
-            upper_wick = highs[i] - max(opens[i], closes[i])
+        # Only check the LAST CLOSED candle (index -2, since -1 is forming)
+        # This ensures we're not entering on a half-formed wick
+        i = -2
 
-            if body == 0:
-                body = 0.00001  # Avoid division by zero
+        body = abs(closes[i] - opens[i])
+        candle_range = highs[i] - lows[i]
+        lower_wick = min(opens[i], closes[i]) - lows[i]
+        upper_wick = highs[i] - max(opens[i], closes[i])
 
-            # Long lower wick + small upper wick = bullish rejection
-            if lower_wick > body * self.min_wick_ratio and lower_wick > upper_wick * 1.5:
-                return True
+        if candle_range == 0:
+            return False
 
-        return False
+        # STRICT criteria for a quality rejection:
+        # 1. Lower wick must be at least 60% of total candle range
+        wick_ratio = lower_wick / candle_range
+        if wick_ratio < 0.6:
+            return False
+
+        # 2. Close must be in upper 40% of candle (buyers won)
+        close_position = (closes[i] - lows[i]) / candle_range
+        if close_position < 0.6:
+            return False
+
+        # 3. Upper wick should be small (less than 20% of range)
+        upper_wick_ratio = upper_wick / candle_range
+        if upper_wick_ratio > 0.2:
+            return False
+
+        return True
 
     def _check_bearish_rejection(self, opens: np.ndarray, highs: np.ndarray,
                                   lows: np.ndarray, closes: np.ndarray) -> bool:
         """
-        Check for bearish rejection (long upper wick).
+        Check for STRONG bearish rejection (long upper wick).
 
-        Bearish rejection = price went up but sellers pushed it back down
-        Shows as candle with long upper wick relative to body.
+        A good scalper looks for:
+        1. Long upper wick (at least 60% of candle range)
+        2. Close near the low of the candle (sellers in control at close)
+        3. The candle should be complete (we only check closed candles)
+
+        Bearish rejection = price went up but sellers pushed it back down DECISIVELY
         """
-        # Check last 2 candles
-        for i in [-1, -2]:
-            body = abs(closes[i] - opens[i])
-            upper_wick = highs[i] - max(opens[i], closes[i])
-            lower_wick = min(opens[i], closes[i]) - lows[i]
+        # Only check the LAST CLOSED candle (index -2, since -1 is forming)
+        i = -2
 
-            if body == 0:
-                body = 0.00001
+        body = abs(closes[i] - opens[i])
+        candle_range = highs[i] - lows[i]
+        upper_wick = highs[i] - max(opens[i], closes[i])
+        lower_wick = min(opens[i], closes[i]) - lows[i]
 
-            # Long upper wick + small lower wick = bearish rejection
-            if upper_wick > body * self.min_wick_ratio and upper_wick > lower_wick * 1.5:
-                return True
+        if candle_range == 0:
+            return False
 
-        return False
+        # STRICT criteria for a quality rejection:
+        # 1. Upper wick must be at least 60% of total candle range
+        wick_ratio = upper_wick / candle_range
+        if wick_ratio < 0.6:
+            return False
+
+        # 2. Close must be in lower 40% of candle (sellers won)
+        close_position = (closes[i] - lows[i]) / candle_range
+        if close_position > 0.4:
+            return False
+
+        # 3. Lower wick should be small (less than 20% of range)
+        lower_wick_ratio = lower_wick / candle_range
+        if lower_wick_ratio > 0.2:
+            return False
+
+        return True
 
     def _check_bullish_engulfing(self, opens: np.ndarray, highs: np.ndarray,
                                   lows: np.ndarray, closes: np.ndarray) -> bool:
         """
-        Check for bullish engulfing pattern.
+        Check for STRONG bullish engulfing pattern.
 
-        Previous candle: bearish (red)
-        Current candle: bullish (green) and body engulfs previous body
+        Good scalper criteria:
+        1. Previous candle: bearish (red)
+        2. Current candle (CLOSED - index -2): bullish and body FULLY engulfs previous
+        3. Current candle should be significantly larger than previous
+        4. Close should be near the high
         """
+        # Check candles -3 (previous) and -2 (engulfing, closed)
+        # We use -2 because -1 is still forming
+        prev_idx = -3
+        curr_idx = -2
+
+        if len(closes) < 4:
+            return False
+
         # Previous candle must be bearish
-        prev_bearish = closes[-2] < opens[-2]
+        prev_bearish = closes[prev_idx] < opens[prev_idx]
         # Current candle must be bullish
-        curr_bullish = closes[-1] > opens[-1]
+        curr_bullish = closes[curr_idx] > opens[curr_idx]
 
         if not (prev_bearish and curr_bullish):
             return False
 
+        # Calculate bodies
+        curr_body = abs(closes[curr_idx] - opens[curr_idx])
+        prev_body = abs(closes[prev_idx] - opens[prev_idx])
+        curr_range = highs[curr_idx] - lows[curr_idx]
+
+        if prev_body == 0 or curr_range == 0:
+            return False
+
+        # Current body must be at least 1.5x previous body (decisive move)
+        if curr_body < prev_body * 1.5:
+            return False
+
         # Current body must engulf previous body
-        curr_body_low = min(opens[-1], closes[-1])
-        curr_body_high = max(opens[-1], closes[-1])
-        prev_body_low = min(opens[-2], closes[-2])
-        prev_body_high = max(opens[-2], closes[-2])
+        curr_body_low = min(opens[curr_idx], closes[curr_idx])
+        curr_body_high = max(opens[curr_idx], closes[curr_idx])
+        prev_body_low = min(opens[prev_idx], closes[prev_idx])
+        prev_body_high = max(opens[prev_idx], closes[prev_idx])
 
         engulfs = curr_body_low <= prev_body_low and curr_body_high >= prev_body_high
 
-        return engulfs
+        if not engulfs:
+            return False
+
+        # Close should be in upper 70% of candle range
+        close_position = (closes[curr_idx] - lows[curr_idx]) / curr_range
+        if close_position < 0.7:
+            return False
+
+        return True
 
     def _check_bearish_engulfing(self, opens: np.ndarray, highs: np.ndarray,
                                   lows: np.ndarray, closes: np.ndarray) -> bool:
         """
-        Check for bearish engulfing pattern.
+        Check for STRONG bearish engulfing pattern.
 
-        Previous candle: bullish (green)
-        Current candle: bearish (red) and body engulfs previous body
+        Good scalper criteria:
+        1. Previous candle: bullish (green)
+        2. Current candle (CLOSED - index -2): bearish and body FULLY engulfs previous
+        3. Current candle should be significantly larger than previous
+        4. Close should be near the low
         """
+        # Check candles -3 (previous) and -2 (engulfing, closed)
+        # We use -2 because -1 is still forming
+        prev_idx = -3
+        curr_idx = -2
+
+        if len(closes) < 4:
+            return False
+
         # Previous candle must be bullish
-        prev_bullish = closes[-2] > opens[-2]
+        prev_bullish = closes[prev_idx] > opens[prev_idx]
         # Current candle must be bearish
-        curr_bearish = closes[-1] < opens[-1]
+        curr_bearish = closes[curr_idx] < opens[curr_idx]
 
         if not (prev_bullish and curr_bearish):
             return False
 
+        # Calculate bodies
+        curr_body = abs(closes[curr_idx] - opens[curr_idx])
+        prev_body = abs(closes[prev_idx] - opens[prev_idx])
+        curr_range = highs[curr_idx] - lows[curr_idx]
+
+        if prev_body == 0 or curr_range == 0:
+            return False
+
+        # Current body must be at least 1.5x previous body (decisive move)
+        if curr_body < prev_body * 1.5:
+            return False
+
         # Current body must engulf previous body
-        curr_body_low = min(opens[-1], closes[-1])
-        curr_body_high = max(opens[-1], closes[-1])
-        prev_body_low = min(opens[-2], closes[-2])
-        prev_body_high = max(opens[-2], closes[-2])
+        curr_body_low = min(opens[curr_idx], closes[curr_idx])
+        curr_body_high = max(opens[curr_idx], closes[curr_idx])
+        prev_body_low = min(opens[prev_idx], closes[prev_idx])
+        prev_body_high = max(opens[prev_idx], closes[prev_idx])
 
         engulfs = curr_body_low <= prev_body_low and curr_body_high >= prev_body_high
 
-        return engulfs
+        if not engulfs:
+            return False
+
+        # Close should be in lower 30% of candle range (sellers in control)
+        close_position = (closes[curr_idx] - lows[curr_idx]) / curr_range
+        if close_position > 0.3:
+            return False
+
+        return True
 
     def _analyze_momentum(self, opens: np.ndarray, closes: np.ndarray) -> str:
         """
