@@ -105,6 +105,16 @@ class PriceActionStrategy:
         self.strong_rejection_enabled = True
         self.strong_rejection_size_multiplier = 0.5  # 50% size for counter-trend rejections
 
+        # ============================================================
+        # FIX 5: Price Action Trend Filter - NEVER fight the obvious trend
+        # ============================================================
+        # This overrides sentiment/currency strength when chart clearly shows a trend
+        self.trend_filter_enabled = True
+        self.trend_ema_period = 50  # Use 50 EMA for trend direction
+        self.min_ema_distance_pips = 5.0  # Price must be X pips away from EMA to confirm trend
+        self.require_higher_lows_for_buy = True  # Must see higher lows to allow BUY
+        self.require_lower_highs_for_sell = True  # Must see lower highs to allow SELL
+
         # Tick-level monitoring (watch forming candle)
         self._forming_candle_open: Optional[float] = None
         self._forming_candle_high: float = 0.0
@@ -353,11 +363,20 @@ class PriceActionStrategy:
                      resistance_prediction["touch_count"], resistance_prediction["likely_reaction"],
                      resistance_prediction["confidence"] * 100)
 
+        # ============================================================
+        # FIX 5: TREND FILTER - Don't fight the obvious chart trend!
+        # ============================================================
+        allowed_direction, chart_trend, trend_reason = self._get_chart_trend_filter(
+            closes, highs, lows, pip_value
+        )
+        LOG.info("  CHART TREND: %s | Allowed: %s | %s", chart_trend, allowed_direction, trend_reason)
+
         # Generate signal based on confluence
         signal = None
 
         # BUY Setup: At support + bullish rejection
-        if at_support and (bullish_rejection or bullish_engulfing):
+        # FIX 5: Check trend filter - don't BUY if chart is clearly bearish
+        if at_support and (bullish_rejection or bullish_engulfing) and allowed_direction in ["BUY", "BOTH"]:
             # Determine if this is with or against currency bias
             is_with_trend = self._currency_bias in ["BUY", None]
 
@@ -419,7 +438,8 @@ class PriceActionStrategy:
                          trade_type.upper(), signal.reason, confidence * 100, size_mult * 100)
 
         # SELL Setup: At resistance + bearish rejection
-        elif at_resistance and (bearish_rejection or bearish_engulfing):
+        # FIX 5: Check trend filter - don't SELL if chart is clearly bullish
+        elif at_resistance and (bearish_rejection or bearish_engulfing) and allowed_direction in ["SELL", "BOTH"]:
             # Determine if this is with or against currency bias
             is_with_trend = self._currency_bias in ["SELL", None]
 
@@ -522,6 +542,17 @@ class PriceActionStrategy:
                 current_close=current_close,
                 pip_value=pip_value
             )
+
+        # ============================================================
+        # FIX 5: FINAL TREND FILTER CHECK - Block any signal that fights the trend
+        # ============================================================
+        if signal is not None:
+            if allowed_direction == "BUY" and signal.side == "SELL":
+                LOG.warning("SIGNAL BLOCKED: SELL signal rejected - chart is BULLISH (only BUY allowed)")
+                signal = None
+            elif allowed_direction == "SELL" and signal.side == "BUY":
+                LOG.warning("SIGNAL BLOCKED: BUY signal rejected - chart is BEARISH (only SELL allowed)")
+                signal = None
 
         if signal:
             self.set_cooldown(minutes=5)
@@ -1042,6 +1073,98 @@ class PriceActionStrategy:
                 valid_patterns.append(pattern)
 
         return valid_patterns
+
+    def _get_chart_trend_filter(self, closes: np.ndarray, highs: np.ndarray,
+                                 lows: np.ndarray, pip_value: float) -> tuple:
+        """
+        FIX 5: Price Action Trend Filter - Determine allowed trade direction from ACTUAL chart.
+
+        This is the MOST IMPORTANT filter. It looks at:
+        1. Price position relative to 50 EMA (above = bullish, below = bearish)
+        2. Recent swing structure (higher lows = bullish, lower highs = bearish)
+        3. Recent candle direction (are we making new highs or new lows?)
+
+        Returns:
+            (allowed_direction, chart_trend, reason)
+            - allowed_direction: "BUY", "SELL", or "BOTH"
+            - chart_trend: "bullish", "bearish", or "neutral"
+            - reason: explanation string
+        """
+        if not self.trend_filter_enabled:
+            return "BOTH", "neutral", "trend_filter_disabled"
+
+        if len(closes) < self.trend_ema_period + 10:
+            return "BOTH", "neutral", "insufficient_data"
+
+        # Calculate 50 EMA for trend direction
+        ema50 = self._calculate_ema(closes, self.trend_ema_period)
+        current_ema = ema50[-1]
+        current_close = closes[-1]
+
+        # Check price position relative to EMA
+        ema_distance_pips = (current_close - current_ema) / pip_value
+        price_above_ema = ema_distance_pips > self.min_ema_distance_pips
+        price_below_ema = ema_distance_pips < -self.min_ema_distance_pips
+
+        # Check recent swing structure (last 20 candles)
+        recent_lows = lows[-20:]
+        recent_highs = highs[-20:]
+
+        # Count higher lows (bullish structure)
+        higher_lows = 0
+        for i in range(5, len(recent_lows), 5):  # Check every 5 candles
+            if recent_lows[i:i+5].min() > recent_lows[i-5:i].min():
+                higher_lows += 1
+
+        # Count lower highs (bearish structure)
+        lower_highs = 0
+        for i in range(5, len(recent_highs), 5):
+            if recent_highs[i:i+5].max() < recent_highs[i-5:i].max():
+                lower_highs += 1
+
+        # Check last 5 candles direction
+        recent_closes = closes[-5:]
+        bullish_candles = sum(1 for i in range(1, len(recent_closes)) if recent_closes[i] > recent_closes[i-1])
+        bearish_candles = 5 - bullish_candles
+
+        # Determine chart trend
+        bullish_signals = 0
+        bearish_signals = 0
+        reasons = []
+
+        if price_above_ema:
+            bullish_signals += 2
+            reasons.append(f"price_above_EMA50(+{ema_distance_pips:.1f}pips)")
+        elif price_below_ema:
+            bearish_signals += 2
+            reasons.append(f"price_below_EMA50({ema_distance_pips:.1f}pips)")
+
+        if higher_lows >= 2:
+            bullish_signals += 2
+            reasons.append(f"higher_lows({higher_lows})")
+        if lower_highs >= 2:
+            bearish_signals += 2
+            reasons.append(f"lower_highs({lower_highs})")
+
+        if bullish_candles >= 4:
+            bullish_signals += 1
+            reasons.append(f"recent_bullish({bullish_candles}/5)")
+        elif bearish_candles >= 4:
+            bearish_signals += 1
+            reasons.append(f"recent_bearish({bearish_candles}/5)")
+
+        # Determine allowed direction
+        reason_str = " | ".join(reasons) if reasons else "neutral_chart"
+
+        if bullish_signals >= 3 and bearish_signals <= 1:
+            LOG.info("TREND FILTER: BULLISH chart - only BUY allowed | %s", reason_str)
+            return "BUY", "bullish", reason_str
+        elif bearish_signals >= 3 and bullish_signals <= 1:
+            LOG.info("TREND FILTER: BEARISH chart - only SELL allowed | %s", reason_str)
+            return "SELL", "bearish", reason_str
+        else:
+            LOG.info("TREND FILTER: NEUTRAL chart - both directions allowed | %s", reason_str)
+            return "BOTH", "neutral", reason_str
 
     def _calculate_ema(self, closes: np.ndarray, period: int) -> np.ndarray:
         """Calculate Exponential Moving Average."""
