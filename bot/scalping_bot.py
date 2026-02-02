@@ -385,8 +385,12 @@ class ScalpingBot:
         # Update execution engine
         self.execution = ScalpingExecutionEngine(self.cfg, self.mt5, self.risk, self.logger)
 
-        # Enable the symbol in MT5
-        self.mt5.symbol_select(new_symbol)
+        # Enable the symbol in MT5 (True = enable in Market Watch)
+        import MetaTrader5 as mt5
+        if not mt5.symbol_select(new_symbol, True):
+            LOG.warning("Failed to enable symbol %s in Market Watch", new_symbol)
+        else:
+            LOG.info("Symbol %s enabled in Market Watch", new_symbol)
 
         LOG.info("*** SWITCHED TRADING SYMBOL: %s -> %s ***", old_symbol, new_symbol)
 

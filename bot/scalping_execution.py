@@ -10,6 +10,7 @@ Exit Strategies:
 5. Partial Profit Taking (close 80% at 15% profit)
 """
 import logging
+import re
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional, Dict, Set
@@ -270,7 +271,7 @@ class ScalpingExecutionEngine:
             "price": float(close_price),
             "deviation": 10,
             "magic": self.cfg.magic,
-            "comment": "partial_80%",
+            "comment": "partial_80",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
@@ -355,6 +356,9 @@ class ScalpingExecutionEngine:
         close_price = tick.bid if is_buy else tick.ask
         close_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
 
+        # Sanitize comment for MT5
+        safe_reason = re.sub(r'[^a-zA-Z0-9_]', '_', reason)[:31]
+
         req = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.cfg.symbol,
@@ -364,7 +368,7 @@ class ScalpingExecutionEngine:
             "price": float(close_price),
             "deviation": 10,
             "magic": self.cfg.magic,
-            "comment": reason[:31],
+            "comment": safe_reason,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
@@ -408,6 +412,10 @@ class ScalpingExecutionEngine:
             tp = price - tp_dist
             order_type = mt5.ORDER_TYPE_SELL
 
+        # Sanitize comment - MT5 doesn't accept special characters like | % ,
+        # Use simple alphanumeric comment
+        safe_comment = re.sub(r'[^a-zA-Z0-9_]', '_', sig.reason)[:31]
+
         req = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.cfg.symbol,
@@ -418,14 +426,27 @@ class ScalpingExecutionEngine:
             "tp": float(tp),
             "deviation": 10,
             "magic": self.cfg.magic,
-            "comment": sig.reason[:31],
+            "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_FOK,
         }
 
+        # Log order details for debugging
+        LOG.info("Order request: %s %s %.2f lots @ %.5f SL=%.5f TP=%.5f",
+                 sig.side, self.cfg.symbol, lots, price, sl, tp)
+
         check = self.mt5.order_check(req)
-        if check is None or check.retcode != 0:
-            LOG.error("Order check failed: %s", check)
+        if check is None:
+            # Get last error for more details
+            error = mt5.last_error()
+            LOG.error("Order check returned None - symbol may not be enabled. Error: %s", error)
+            LOG.error("Attempting to enable symbol %s...", self.cfg.symbol)
+            # Try to enable the symbol
+            if not mt5.symbol_select(self.cfg.symbol, True):
+                LOG.error("Failed to enable symbol %s", self.cfg.symbol)
+            return False
+        if check.retcode != 0:
+            LOG.error("Order check failed: retcode=%s comment=%s", check.retcode, getattr(check, 'comment', ''))
             return False
 
         res = self.mt5.order_send(req)
