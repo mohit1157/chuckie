@@ -7,12 +7,14 @@ Integrates with:
 3. FREE RSS Feeds (ForexLive, FXStreet, DailyFX, Investing.com)
 4. Reddit sentiment (r/Forex, r/forextrading) - optional
 5. Twitter/X - optional (requires paid API)
+6. OpenAI GPT-4o-mini for AI-powered sentiment analysis (optional, recommended)
 
 Configure API keys in .env file (optional - RSS feeds work without keys).
+For best sentiment accuracy, add OPENAI_API_KEY to .env
 """
 import os
 import logging
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 from .config import AppConfig
 
 LOG = logging.getLogger("bot.news")
@@ -31,6 +33,7 @@ class NewsFilter:
     - RSS feeds from ForexLive, FXStreet, DailyFX, Investing.com
 
     Optional API Keys (set in .env):
+    - OPENAI_API_KEY: For AI-powered sentiment (RECOMMENDED - most accurate)
     - NEWSAPI_KEY: From https://newsapi.org (100 req/day free)
     - REDDIT_CLIENT_ID/SECRET: From reddit.com/prefs/apps
     - TWITTER_BEARER_TOKEN: From developer.twitter.com (paid only)
@@ -41,6 +44,7 @@ class NewsFilter:
         self._provider = None
         self._social_news = None
         self._free_news = None  # Free RSS feeds
+        self._openai_analyzer = None  # OpenAI sentiment analyzer
         self._init_provider()
 
     def _init_provider(self):
@@ -50,6 +54,21 @@ class NewsFilter:
         if provider_name == "stub":
             LOG.info("News filter: STUB mode (not blocking)")
             return
+
+        # Initialize OpenAI sentiment analyzer (RECOMMENDED - most accurate)
+        try:
+            from .openai_sentiment import OpenAISentimentAnalyzer
+
+            openai_key = os.getenv("OPENAI_API_KEY")
+            if openai_key:
+                self._openai_analyzer = OpenAISentimentAnalyzer(api_key=openai_key)
+                LOG.info("OpenAI sentiment analyzer: ENABLED (GPT-4o-mini)")
+            else:
+                LOG.info("OpenAI sentiment: DISABLED (set OPENAI_API_KEY for AI-powered analysis)")
+        except ImportError as e:
+            LOG.warning("OpenAI sentiment unavailable: %s", e)
+        except Exception as e:
+            LOG.warning("Failed to initialize OpenAI analyzer: %s", e)
 
         try:
             from .news_provider import ComprehensiveNewsFilter
@@ -260,3 +279,92 @@ class NewsFilter:
                 self._social_news.log_social_report(self.cfg.symbol)
             except Exception as e:
                 LOG.debug("Social report unavailable: %s", e)
+
+        # Log OpenAI sentiment analysis if available
+        if self._openai_analyzer is not None:
+            try:
+                headlines = self._collect_headlines(self.cfg.symbol)
+                if headlines:
+                    self._openai_analyzer.log_analysis_report(headlines, self.cfg.symbol)
+            except Exception as e:
+                LOG.debug("OpenAI report unavailable: %s", e)
+
+    def _collect_headlines(self, symbol: str) -> List[str]:
+        """Collect headlines from all available sources for a symbol."""
+        headlines = []
+
+        # Get RSS headlines (primary source)
+        if self._free_news is not None:
+            try:
+                rss_data = self._free_news.get_sentiment_for_pair(symbol)
+                if rss_data and "top_headlines" in rss_data:
+                    headlines.extend(rss_data["top_headlines"])
+            except Exception as e:
+                LOG.debug("Failed to get RSS headlines: %s", e)
+
+        # Get all news for more headlines
+        if self._free_news is not None and len(headlines) < 10:
+            try:
+                all_news = self._free_news.fetch_all_news(max_age_hours=12)
+                base = symbol[:3].upper()
+                quote = symbol[3:6].upper()
+                for news in all_news:
+                    if base in news.currencies_affected or quote in news.currencies_affected:
+                        if news.title not in headlines:
+                            headlines.append(news.title)
+                            if len(headlines) >= 15:
+                                break
+            except Exception as e:
+                LOG.debug("Failed to get additional headlines: %s", e)
+
+        # Get news provider headlines
+        if self._provider is not None:
+            try:
+                # Try to get headlines from provider
+                provider_data = self._provider.get_market_sentiment(symbol)
+                if provider_data and "headlines" in provider_data:
+                    for h in provider_data["headlines"]:
+                        if h not in headlines:
+                            headlines.append(h)
+            except Exception as e:
+                LOG.debug("Failed to get provider headlines: %s", e)
+
+        return headlines[:20]  # Limit to 20 headlines to control API costs
+
+    def get_pair_sentiment(self, symbol: str) -> Tuple[float, str]:
+        """
+        Get sentiment for a specific currency pair.
+
+        Uses OpenAI for accurate AI-powered analysis if available,
+        otherwise falls back to keyword-based analysis.
+
+        Args:
+            symbol: Currency pair (e.g., "EURUSD")
+
+        Returns:
+            (sentiment_score, recommendation)
+            - sentiment_score: -1 to +1 (negative=bearish, positive=bullish)
+            - recommendation: "bullish", "bearish", or "neutral"
+        """
+        # Try OpenAI first (most accurate)
+        if self._openai_analyzer is not None:
+            try:
+                headlines = self._collect_headlines(symbol)
+                if headlines:
+                    pair_sentiment, recommendation = self._openai_analyzer.get_pair_sentiment(
+                        headlines, symbol
+                    )
+                    LOG.debug("OpenAI sentiment for %s: %.2f (%s)",
+                             symbol, pair_sentiment, recommendation)
+                    return pair_sentiment, recommendation
+            except Exception as e:
+                LOG.warning("OpenAI sentiment failed, using keyword fallback: %s", e)
+
+        # Fallback to keyword-based sentiment from get_sentiment()
+        sentiment_data = self.get_sentiment()
+        if sentiment_data:
+            overall = sentiment_data.get("overall_sentiment", 0)
+            recommendation = sentiment_data.get("recommendation", "neutral")
+            return overall, recommendation
+
+        return 0.0, "neutral"
