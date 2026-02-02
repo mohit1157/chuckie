@@ -87,17 +87,42 @@ class TwitterClient:
         "CNY": ["cny", "yuan", "renminbi", "china", "pboc"],
     }
 
-    # Sentiment words
+    # Sentiment words - comprehensive forex/economic terms
     BULLISH_WORDS = [
-        "surge", "soar", "jump", "rally", "gain", "rise", "up",
-        "bullish", "strong", "growth", "beat", "exceed", "optimism",
-        "recovery", "support", "buy", "long", "higher", "peak",
+        # Price action
+        "surge", "soar", "jump", "rally", "gain", "rise", "climb", "spike",
+        "breakout", "advance", "rebound", "bounce", "recover", "uptick",
+        # Sentiment
+        "bullish", "strong", "robust", "solid", "optimism", "optimistic",
+        "confident", "positive", "upbeat", "encouraging", "promising",
+        # Economic
+        "growth", "expansion", "boom", "acceleration", "improving",
+        "beat", "exceed", "surpass", "outperform", "better than expected",
+        # Central bank / Policy
+        "hawkish", "tightening", "rate hike", "hike", "restrictive",
+        # Technical
+        "support", "higher", "peak", "highs", "uptrend", "momentum",
+        "buy", "long", "accumulation", "demand",
     ]
 
     BEARISH_WORDS = [
-        "drop", "fall", "plunge", "crash", "sink", "decline", "down",
-        "bearish", "weak", "recession", "miss", "disappoint", "fear",
-        "crisis", "sell", "short", "lower", "bottom", "cut",
+        # Price action
+        "drop", "fall", "plunge", "crash", "sink", "decline", "tumble",
+        "slide", "slump", "collapse", "plummet", "downturn", "selloff",
+        "breakdown", "retreat", "downtick",
+        # Sentiment
+        "bearish", "weak", "soft", "fragile", "pessimism", "pessimistic",
+        "concern", "worried", "fear", "anxiety", "uncertainty", "risk-off",
+        # Economic
+        "recession", "contraction", "slowdown", "stagnation", "deteriorating",
+        "miss", "disappoint", "below expectations", "worse than expected",
+        # Central bank / Policy
+        "dovish", "easing", "rate cut", "cut", "accommodative", "stimulus",
+        # Technical
+        "resistance", "lower", "bottom", "lows", "downtrend", "selling",
+        "sell", "short", "distribution", "supply",
+        # Crisis
+        "crisis", "emergency", "default", "warning", "alert",
     ]
 
     # Rate limiting: 500 posts/month = ~16/day

@@ -285,15 +285,42 @@ class NewsAPIClient:
         "inflation", "monetary policy", "trade war", "tariff",
     ]
 
-    # Simple sentiment words
+    # Comprehensive sentiment words for forex/economic news
     POSITIVE_WORDS = [
-        "surge", "jump", "gain", "rise", "rally", "boost", "strong",
-        "bullish", "optimism", "recovery", "growth", "profit", "beat",
+        # Price action
+        "surge", "soar", "jump", "rally", "gain", "rise", "climb", "spike",
+        "breakout", "advance", "rebound", "bounce", "recover", "uptick",
+        # Sentiment
+        "bullish", "strong", "robust", "solid", "optimism", "optimistic",
+        "confident", "positive", "upbeat", "encouraging", "promising",
+        # Economic
+        "growth", "expansion", "boom", "acceleration", "improving", "profit",
+        "beat", "exceed", "surpass", "outperform", "better than expected",
+        # Central bank / Policy
+        "hawkish", "tightening", "rate hike", "hike", "restrictive",
+        # Technical
+        "support", "higher", "peak", "highs", "uptrend", "momentum",
+        "buy", "long", "accumulation", "demand",
     ]
 
     NEGATIVE_WORDS = [
-        "fall", "drop", "decline", "plunge", "crash", "weak", "bearish",
-        "pessimism", "recession", "loss", "miss", "fear", "concern", "risk",
+        # Price action
+        "drop", "fall", "plunge", "crash", "sink", "decline", "tumble",
+        "slide", "slump", "collapse", "plummet", "downturn", "selloff",
+        "breakdown", "retreat", "downtick",
+        # Sentiment
+        "bearish", "weak", "soft", "fragile", "pessimism", "pessimistic",
+        "concern", "worried", "fear", "anxiety", "uncertainty", "risk-off",
+        # Economic
+        "recession", "contraction", "slowdown", "stagnation", "deteriorating",
+        "miss", "disappoint", "below expectations", "worse than expected", "loss",
+        # Central bank / Policy
+        "dovish", "easing", "rate cut", "cut", "accommodative", "stimulus",
+        # Technical
+        "resistance", "lower", "bottom", "lows", "downtrend", "selling",
+        "sell", "short", "distribution", "supply",
+        # Crisis
+        "crisis", "emergency", "default", "warning", "alert", "risk",
     ]
 
     def __init__(self, api_key: Optional[str] = None):
@@ -474,8 +501,16 @@ class RedditSentiment:
         """Calculate sentiment from post text."""
         text_lower = text.lower()
 
-        bullish = ["long", "buy", "bull", "calls", "moon", "pump", "breakout", "support"]
-        bearish = ["short", "sell", "bear", "puts", "crash", "dump", "breakdown", "resistance"]
+        bullish = [
+            "long", "buy", "bull", "bullish", "calls", "breakout", "support",
+            "rally", "surge", "gain", "rise", "uptrend", "higher", "bounce",
+            "accumulation", "demand", "strong", "hawkish", "hike",
+        ]
+        bearish = [
+            "short", "sell", "bear", "bearish", "puts", "breakdown", "resistance",
+            "crash", "drop", "fall", "decline", "downtrend", "lower", "dump",
+            "distribution", "supply", "weak", "dovish", "cut",
+        ]
 
         bull_count = sum(1 for w in bullish if w in text_lower)
         bear_count = sum(1 for w in bearish if w in text_lower)

@@ -74,17 +74,42 @@ class FreeNewsFetcher:
         "USD+EUR+exchange",
     ]
 
-    # Sentiment analysis keywords
+    # Sentiment analysis keywords - comprehensive forex/economic terms
     BULLISH_WORDS = [
-        "surge", "soar", "jump", "rally", "gain", "rise", "climb",
-        "bullish", "strong", "growth", "beat", "exceed", "optimism",
-        "recovery", "support", "higher", "peak", "boom", "positive",
+        # Price action
+        "surge", "soar", "jump", "rally", "gain", "rise", "climb", "spike",
+        "breakout", "advance", "rebound", "bounce", "recover", "uptick",
+        # Sentiment
+        "bullish", "strong", "robust", "solid", "optimism", "optimistic",
+        "confident", "positive", "upbeat", "encouraging", "promising",
+        # Economic
+        "growth", "expansion", "boom", "acceleration", "improving",
+        "beat", "exceed", "surpass", "outperform", "better than expected",
+        # Central bank / Policy
+        "hawkish", "tightening", "rate hike", "hike", "restrictive",
+        # Technical
+        "support", "higher", "peak", "highs", "uptrend", "momentum",
+        "buy", "long", "accumulation", "demand",
     ]
 
     BEARISH_WORDS = [
+        # Price action
         "drop", "fall", "plunge", "crash", "sink", "decline", "tumble",
-        "bearish", "weak", "recession", "miss", "disappoint", "fear",
-        "crisis", "lower", "bottom", "slump", "negative", "concern",
+        "slide", "slump", "collapse", "plummet", "downturn", "selloff",
+        "breakdown", "retreat", "downtick",
+        # Sentiment
+        "bearish", "weak", "soft", "fragile", "pessimism", "pessimistic",
+        "concern", "worried", "fear", "anxiety", "uncertainty", "risk-off",
+        # Economic
+        "recession", "contraction", "slowdown", "stagnation", "deteriorating",
+        "miss", "disappoint", "below expectations", "worse than expected",
+        # Central bank / Policy
+        "dovish", "easing", "rate cut", "cut", "accommodative", "stimulus",
+        # Technical
+        "resistance", "lower", "bottom", "lows", "downtrend", "selling",
+        "sell", "short", "distribution", "supply",
+        # Crisis
+        "crisis", "emergency", "default", "warning", "alert",
     ]
 
     # High impact keywords
