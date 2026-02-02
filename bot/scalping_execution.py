@@ -433,6 +433,15 @@ class ScalpingExecutionEngine:
         tp_pips = dynamic_tp if dynamic_tp else self.cfg.trade.tp_pips
 
         lots = self.risk.calc_lot_size(sl_pips)
+
+        # Apply size multiplier from signal (for counter-trend trades)
+        size_multiplier = getattr(sig, 'size_multiplier', 1.0)
+        if size_multiplier < 1.0:
+            original_lots = lots
+            lots = lots * size_multiplier
+            trade_type = getattr(sig, 'trade_type', 'with_trend')
+            LOG.info("Adaptive sizing [%s]: %.2f lots -> %.2f lots (%.0f%%)",
+                     trade_type, original_lots, lots, size_multiplier * 100)
         if lots <= 0:
             LOG.error("Invalid lot size calculated: %.4f", lots)
             return False

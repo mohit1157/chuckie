@@ -587,16 +587,22 @@ class ScalpingBot:
                     time.sleep(1.0)
                     continue
 
+                # Set currency bias on strategy before getting signal
+                if self._use_market_intel and self.market_intel:
+                    bias_direction, bias_strength = self.market_intel.get_currency_bias(self.cfg.symbol)
+                    if hasattr(self.strategy, 'set_currency_bias'):
+                        self.strategy.set_currency_bias(bias_direction, bias_strength)
+
                 # Get signal from strategy
                 sig = self.strategy.get_signal()
                 if sig is not None:
-                    # If pair selector has a preferred direction, log it but don't reject
-                    # Strong technical signals (5+ confirmations) should be respected
-                    if preferred_direction and sig.side != preferred_direction:
-                        LOG.info("Signal %s goes against pair bias (%s) - but taking it due to technical strength",
-                                 sig.side, preferred_direction)
+                    # Log trade type info
+                    trade_type = getattr(sig, 'trade_type', 'unknown')
+                    size_mult = getattr(sig, 'size_multiplier', 1.0)
+                    LOG.info("Signal: %s %s [%s] - size multiplier: %.0f%%",
+                             sig.side, self.cfg.symbol, trade_type.upper(), size_mult * 100)
 
-                    # Validate against market intelligence
+                    # Validate against market intelligence (for volatility/VIX checks only)
                     if sig and self._use_market_intel and self.market_intel:
                         should_trade, reason = self.market_intel.should_take_trade(
                             self.cfg.symbol, sig.side

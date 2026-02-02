@@ -704,22 +704,39 @@ class MarketIntelligence:
         base_strength = context.currency_strengths.get(base_currency)
         quote_strength = context.currency_strengths.get(quote_currency)
 
-        if base_strength and quote_strength:
-            strength_diff = base_strength.strength - quote_strength.strength
-
-            # If base is weaker than quote (threshold lowered to 5 for tighter filtering)
-            if strength_diff < -5:  # Base currency is weaker
-                if direction == "BUY":
-                    return False, f"BUY blocked: {base_currency} weak ({base_strength.strength:.1f}) vs {quote_currency} strong ({quote_strength.strength:.1f})"
-                # SELL is good - we're shorting the weak currency
-
-            # If base is stronger than quote
-            elif strength_diff > 5:  # Base currency is stronger
-                if direction == "SELL":
-                    return False, f"SELL blocked: {base_currency} strong ({base_strength.strength:.1f}) vs {quote_currency} weak ({quote_strength.strength:.1f})"
-                # BUY is good - we're buying the strong currency
-
+        # No longer blocking trades - let the strategy handle sizing
+        # The strategy will use smaller position sizes for counter-trend trades
         return True, "Trade aligns with market context"
+
+    def get_currency_bias(self, symbol: str) -> Tuple[Optional[str], float]:
+        """
+        Get the recommended trading bias for a symbol based on currency strength.
+
+        Returns:
+            (direction, strength_diff)
+            direction: "BUY", "SELL", or None if no clear bias
+            strength_diff: absolute difference in currency strengths
+        """
+        context = self.get_market_context()
+
+        base_currency = symbol[:3]
+        quote_currency = symbol[3:]
+
+        base_strength = context.currency_strengths.get(base_currency)
+        quote_strength = context.currency_strengths.get(quote_currency)
+
+        if not base_strength or not quote_strength:
+            return None, 0.0
+
+        strength_diff = base_strength.strength - quote_strength.strength
+
+        # Threshold for significant bias
+        if strength_diff < -3:  # Base weaker than quote
+            return "SELL", abs(strength_diff)
+        elif strength_diff > 3:  # Base stronger than quote
+            return "BUY", abs(strength_diff)
+        else:
+            return None, abs(strength_diff)  # No clear bias
 
     def get_recommended_sl_tp(self, symbol: str) -> Tuple[float, float]:
         """

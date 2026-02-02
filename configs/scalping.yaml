@@ -7,13 +7,13 @@ symbol: "EURUSD"
 timeframe: "M3"  # 3-minute for scalping
 magic: 80808080  # Unique magic number for this strategy
 
-# Risk Management - ADJUSTED for stability
-# Previous: 15% risk with 5 pip SL = huge lots = noise-triggered stops
+# Risk Management - Conservative for consistent gains
+# Pro traders risk 1-2% per trade maximum
 risk:
-  account_risk_per_trade: 0.05  # 5% per trade (was 15% - too aggressive)
-  max_spread_points: 25  # Max 2.5 pips spread (tighter)
+  account_risk_per_trade: 0.02  # 2% per trade (professional standard)
+  max_spread_points: 25  # Max 2.5 pips spread
   max_open_positions: 1  # Only 1 position at a time
-  max_daily_loss_pct: 0.10  # Stop after 10% daily loss
+  max_daily_loss_pct: 0.06  # Stop after 6% daily loss
 
 # Trade Parameters - WIDER SL/TP for stability
 # 5 pip SL was getting hit by market noise - need more room

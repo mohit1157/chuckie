@@ -31,6 +31,8 @@ class Signal:
     sl_price: float = 0.0
     tp_price: float = 0.0
     confidence: float = 0.0
+    trade_type: str = "with_trend"  # "with_trend" or "counter_trend"
+    size_multiplier: float = 1.0  # 1.0 for with_trend, 0.4 for counter_trend
 
 
 @dataclass
@@ -67,11 +69,26 @@ class PriceActionStrategy:
         self._cooldown_until: Optional[datetime] = None
         self._last_signal_bar: Optional[int] = None
 
+        # Currency strength bias (set externally by bot)
+        self._currency_bias: Optional[str] = None  # "BUY", "SELL", or None
+        self._bias_strength: float = 0.0  # How strong is the bias (0-100)
+
         # Strategy parameters
         self.swing_lookback = 5  # Candles to confirm a swing point
         self.sr_touch_tolerance_pips = 3.0  # How close price must be to S/R
         self.min_wick_ratio = 0.5  # Minimum wick/body ratio for rejection
         self.min_rr_ratio = 1.5  # Minimum risk:reward ratio
+
+        # Adaptive trade parameters
+        self.counter_trend_size_multiplier = 0.4  # 40% size for counter-trend
+        self.counter_trend_tp_multiplier = 0.5  # Smaller TP for counter-trend (quick scalp)
+        self.with_trend_tp_multiplier = 1.5  # Larger TP for with-trend (let it run)
+
+    def set_currency_bias(self, direction: Optional[str], strength: float = 0.0):
+        """Set the currency strength bias for trade classification."""
+        self._currency_bias = direction
+        self._bias_strength = strength
+        LOG.info("Currency bias set: %s (strength: %.1f)", direction or "NEUTRAL", strength)
 
     def is_in_cooldown(self) -> bool:
         """Check if strategy is in cooldown."""
@@ -152,7 +169,7 @@ class PriceActionStrategy:
 
         # Log analysis
         LOG.info("Price Action Analysis:")
-        LOG.info("  Trend: %s | Momentum: %s", trend, recent_momentum)
+        LOG.info("  Trend: %s | Momentum: %s | Currency Bias: %s", trend, recent_momentum, self._currency_bias or "NEUTRAL")
         LOG.info("  Nearest Support: %.5f (at_support=%s) | Resistance: %.5f (at_resistance=%s)",
                  nearest_support or 0, at_support, nearest_resistance or 0, at_resistance)
         LOG.info("  Bullish Rejection: %s | Bearish Rejection: %s", bullish_rejection, bearish_rejection)
@@ -161,110 +178,115 @@ class PriceActionStrategy:
         # Generate signal based on confluence
         signal = None
 
-        # BUY Setup: At support + bullish rejection + trend not strongly bearish
+        # BUY Setup: At support + bullish rejection
         if at_support and (bullish_rejection or bullish_engulfing):
-            if trend != "strong_downtrend":  # Don't buy in strong downtrend
-                confidence = self._calculate_confidence(
-                    at_level=True,
-                    rejection=bullish_rejection,
-                    engulfing=bullish_engulfing,
-                    trend_aligned=(trend in ["uptrend", "strong_uptrend", "ranging"]),
-                    momentum_aligned=(recent_momentum in ["bullish", "neutral"])
+            # Determine if this is with or against currency bias
+            is_with_trend = self._currency_bias in ["BUY", None]
+
+            # For counter-trend, require stronger confirmation
+            min_confidence = 0.6 if is_with_trend else 0.7
+
+            confidence = self._calculate_confidence(
+                at_level=True,
+                rejection=bullish_rejection,
+                engulfing=bullish_engulfing,
+                trend_aligned=(trend in ["uptrend", "strong_uptrend", "ranging"]),
+                momentum_aligned=(recent_momentum in ["bullish", "neutral"])
+            )
+
+            if confidence >= min_confidence:
+                sl_price = nearest_support - (self.sr_touch_tolerance_pips * 2 * pip_value)
+                risk_pips = (current_close - sl_price) / pip_value
+
+                # Adaptive TP based on trade type
+                if is_with_trend:
+                    tp_multiplier = self.with_trend_tp_multiplier
+                    size_mult = 1.0
+                    trade_type = "with_trend"
+                else:
+                    tp_multiplier = self.counter_trend_tp_multiplier
+                    size_mult = self.counter_trend_size_multiplier
+                    trade_type = "counter_trend"
+
+                tp_price = current_close + (risk_pips * tp_multiplier * pip_value)
+
+                reasons = ["at_support"]
+                if bullish_rejection:
+                    reasons.append("wick_rejection")
+                if bullish_engulfing:
+                    reasons.append("engulfing")
+                if is_with_trend:
+                    reasons.append("WITH_TREND")
+                else:
+                    reasons.append("COUNTER_TREND")
+
+                signal = Signal(
+                    side="BUY",
+                    reason=f"pa_buy|{'+'.join(reasons)}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type=trade_type,
+                    size_multiplier=size_mult
                 )
+                LOG.info("BUY SIGNAL [%s]: %s (confidence: %.0f%%, size: %.0f%%)",
+                         trade_type.upper(), signal.reason, confidence * 100, size_mult * 100)
 
-                if confidence >= 0.6:  # Minimum 60% confidence
-                    sl_price = nearest_support - (self.sr_touch_tolerance_pips * 2 * pip_value)
-                    risk_pips = (current_close - sl_price) / pip_value
-                    tp_price = current_close + (risk_pips * self.min_rr_ratio * pip_value)
-
-                    reasons = []
-                    if at_support:
-                        reasons.append("at_support")
-                    if bullish_rejection:
-                        reasons.append("wick_rejection")
-                    if bullish_engulfing:
-                        reasons.append("engulfing")
-                    if trend in ["uptrend", "strong_uptrend"]:
-                        reasons.append("trend_aligned")
-
-                    signal = Signal(
-                        side="BUY",
-                        reason=f"pa_buy|{'+'.join(reasons)}|conf={confidence:.0%}",
-                        entry_price=current_close,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        confidence=confidence
-                    )
-                    LOG.info("BUY SIGNAL: %s (confidence: %.0f%%)", signal.reason, confidence * 100)
-
-        # SELL Setup: At resistance + bearish rejection + trend not strongly bullish
+        # SELL Setup: At resistance + bearish rejection
         elif at_resistance and (bearish_rejection or bearish_engulfing):
-            if trend != "strong_uptrend":  # Don't sell in strong uptrend
-                confidence = self._calculate_confidence(
-                    at_level=True,
-                    rejection=bearish_rejection,
-                    engulfing=bearish_engulfing,
-                    trend_aligned=(trend in ["downtrend", "strong_downtrend", "ranging"]),
-                    momentum_aligned=(recent_momentum in ["bearish", "neutral"])
+            # Determine if this is with or against currency bias
+            is_with_trend = self._currency_bias in ["SELL", None]
+
+            # For counter-trend, require stronger confirmation
+            min_confidence = 0.6 if is_with_trend else 0.7
+
+            confidence = self._calculate_confidence(
+                at_level=True,
+                rejection=bearish_rejection,
+                engulfing=bearish_engulfing,
+                trend_aligned=(trend in ["downtrend", "strong_downtrend", "ranging"]),
+                momentum_aligned=(recent_momentum in ["bearish", "neutral"])
+            )
+
+            if confidence >= min_confidence:
+                sl_price = nearest_resistance + (self.sr_touch_tolerance_pips * 2 * pip_value)
+                risk_pips = (sl_price - current_close) / pip_value
+
+                # Adaptive TP based on trade type
+                if is_with_trend:
+                    tp_multiplier = self.with_trend_tp_multiplier
+                    size_mult = 1.0
+                    trade_type = "with_trend"
+                else:
+                    tp_multiplier = self.counter_trend_tp_multiplier
+                    size_mult = self.counter_trend_size_multiplier
+                    trade_type = "counter_trend"
+
+                tp_price = current_close - (risk_pips * tp_multiplier * pip_value)
+
+                reasons = ["at_resistance"]
+                if bearish_rejection:
+                    reasons.append("wick_rejection")
+                if bearish_engulfing:
+                    reasons.append("engulfing")
+                if is_with_trend:
+                    reasons.append("WITH_TREND")
+                else:
+                    reasons.append("COUNTER_TREND")
+
+                signal = Signal(
+                    side="SELL",
+                    reason=f"pa_sell|{'+'.join(reasons)}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type=trade_type,
+                    size_multiplier=size_mult
                 )
-
-                if confidence >= 0.6:  # Minimum 60% confidence
-                    sl_price = nearest_resistance + (self.sr_touch_tolerance_pips * 2 * pip_value)
-                    risk_pips = (sl_price - current_close) / pip_value
-                    tp_price = current_close - (risk_pips * self.min_rr_ratio * pip_value)
-
-                    reasons = []
-                    if at_resistance:
-                        reasons.append("at_resistance")
-                    if bearish_rejection:
-                        reasons.append("wick_rejection")
-                    if bearish_engulfing:
-                        reasons.append("engulfing")
-                    if trend in ["downtrend", "strong_downtrend"]:
-                        reasons.append("trend_aligned")
-
-                    signal = Signal(
-                        side="SELL",
-                        reason=f"pa_sell|{'+'.join(reasons)}|conf={confidence:.0%}",
-                        entry_price=current_close,
-                        sl_price=sl_price,
-                        tp_price=tp_price,
-                        confidence=confidence
-                    )
-                    LOG.info("SELL SIGNAL: %s (confidence: %.0f%%)", signal.reason, confidence * 100)
-
-        # Trend continuation trades (not at S/R but with strong momentum)
-        elif trend in ["strong_uptrend"] and recent_momentum == "bullish" and bullish_rejection:
-            # Pullback buy in uptrend
-            confidence = 0.65
-            sl_pips = 15
-            tp_pips = sl_pips * self.min_rr_ratio
-
-            signal = Signal(
-                side="BUY",
-                reason=f"pa_trend_buy|pullback+rejection|conf={confidence:.0%}",
-                entry_price=current_close,
-                sl_price=current_close - (sl_pips * pip_value),
-                tp_price=current_close + (tp_pips * pip_value),
-                confidence=confidence
-            )
-            LOG.info("TREND BUY SIGNAL: %s", signal.reason)
-
-        elif trend in ["strong_downtrend"] and recent_momentum == "bearish" and bearish_rejection:
-            # Pullback sell in downtrend
-            confidence = 0.65
-            sl_pips = 15
-            tp_pips = sl_pips * self.min_rr_ratio
-
-            signal = Signal(
-                side="SELL",
-                reason=f"pa_trend_sell|pullback+rejection|conf={confidence:.0%}",
-                entry_price=current_close,
-                sl_price=current_close + (sl_pips * pip_value),
-                tp_price=current_close - (tp_pips * pip_value),
-                confidence=confidence
-            )
-            LOG.info("TREND SELL SIGNAL: %s", signal.reason)
+                LOG.info("SELL SIGNAL [%s]: %s (confidence: %.0f%%, size: %.0f%%)",
+                         trade_type.upper(), signal.reason, confidence * 100, size_mult * 100)
 
         if signal:
             self.set_cooldown(minutes=5)
