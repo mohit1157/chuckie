@@ -1,0 +1,63 @@
+# Overnight Safe Scalping Configuration
+# Same strategy as scalping.yaml but with TIGHTER risk controls
+# Max loss capped at 5% - sleep peacefully
+
+mode: demo  # Change to 'live' for real trading
+symbol: "EURUSD"
+timeframe: "M3"  # 3-minute for scalping
+magic: 80808081  # Different magic number for overnight
+
+# Risk Management - CONSERVATIVE for overnight
+risk:
+  account_risk_per_trade: 0.02  # 2% per trade (was 5%) - smaller positions
+  max_spread_points: 25  # Max 2.5 pips spread
+  max_open_positions: 1  # Only 1 position at a time
+  max_daily_loss_pct: 0.05  # Stop after 5% daily loss (was 10%)
+
+# Trade Parameters - Same as regular scalping
+trade:
+  sl_pips: 15   # Wider SL for stability
+  tp_pips: 22   # 1.5:1 R:R
+  trailing_stop:
+    enabled: true
+    start_pips: 5   # Start trailing at 5 pips profit
+    trail_pips: 3   # Trail 3 pips behind
+  # Advanced exit rules
+  exit_on_ema_cross: true
+  exit_on_structure_break: false
+  partial_profit:
+    enabled: false
+    profit_pct: 0.10
+    close_pct: 0.50
+    move_sl_to_profit: true
+
+# Strategy Configuration - Same as regular
+strategy:
+  name: "price_action"
+  fast_ema: 9
+  slow_ema: 21
+  breakout_lookback: 10
+  min_confirmations: 6
+  use_dynamic_sl_tp: true
+  atr_sl_multiplier: 1.5
+  atr_tp_multiplier: 1.0
+  cooldown_minutes: 5
+
+# Session Filter - Same quality thresholds
+session:
+  enabled: true
+  london_only: false
+  overlap_only: false
+  avoid_news_times: true
+  min_session_quality: 40
+
+# News Filter
+news_filter:
+  enabled: true
+  minutes_before: 30
+  minutes_after: 15
+  provider: "full"
+
+# Logging
+logging:
+  level: "INFO"

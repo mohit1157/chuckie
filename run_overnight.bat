@@ -1,7 +1,7 @@
 @echo off
 echo ========================================
-echo   High-Probability Scalping Bot
-echo   Targeting 80%+ Win Rate
+echo   OVERNIGHT SAFE Scalping Bot
+echo   Max Loss: 5%% | Risk per Trade: 2%%
 echo ========================================
 echo.
 
@@ -11,15 +11,14 @@ if exist "bot\__pycache__" (
     rmdir /s /q "bot\__pycache__"
 )
 
-REM Check if config argument provided
-if "%1"=="" (
-    echo Using default config: configs/scalping.yaml
-    set CONFIG=configs/scalping.yaml
-) else (
-    set CONFIG=%1
-)
+set CONFIG=configs/scalping_overnight.yaml
 
 echo Config: %CONFIG%
+echo.
+echo SAFETY LIMITS:
+echo   - Max daily loss: 5%% (bot stops trading)
+echo   - Risk per trade: 2%% (smaller positions)
+echo   - Same strategy, just safer sizing
 echo.
 echo Starting bot...
 echo Logs will be written to logs\ folder

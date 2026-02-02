@@ -86,6 +86,25 @@ class PriceActionStrategy:
         self.counter_trend_tp_multiplier = 0.5  # Smaller TP for counter-trend (quick scalp)
         self.with_trend_tp_multiplier = 1.5  # Larger TP for with-trend (let it run)
 
+        # Momentum entry parameters (Fix 1)
+        self.momentum_entry_enabled = True
+        self.momentum_min_bias_strength = 6.0  # Minimum currency bias strength
+        self.momentum_min_pattern_confidence = 0.5  # Minimum pattern confidence
+        self.momentum_size_multiplier = 0.7  # 70% size for momentum trades (slightly conservative)
+
+        # Pattern invalidation parameters (Fix 4)
+        self.pattern_invalidation_pips = 10.0  # Invalidate pattern if price moves X pips beyond it
+
+        # MA Touch Entry parameters (Fix 2)
+        self.ma_touch_enabled = True
+        self.ma_period = 20  # EMA period for trend identification
+        self.ma_touch_tolerance_pips = 3.0  # How close to MA counts as "touch"
+        self.ma_touch_size_multiplier = 0.8  # 80% size for MA touch trades
+
+        # Strong Rejection Entry parameters (Fix 3)
+        self.strong_rejection_enabled = True
+        self.strong_rejection_size_multiplier = 0.5  # 50% size for counter-trend rejections
+
         # Tick-level monitoring (watch forming candle)
         self._forming_candle_open: Optional[float] = None
         self._forming_candle_high: float = 0.0
@@ -291,6 +310,12 @@ class PriceActionStrategy:
         self._detected_patterns = self.pattern_recognition.detect_all_patterns(
             opens, highs, lows, closes
         )
+
+        # FIX 4: Invalidate broken patterns
+        self._detected_patterns = self._invalidate_broken_patterns(
+            self._detected_patterns, current_close, pip_value
+        )
+
         pattern_bias, pattern_confidence = self.pattern_recognition.get_pattern_bias(
             self._detected_patterns
         )
@@ -454,6 +479,49 @@ class PriceActionStrategy:
                 )
                 LOG.info("SELL SIGNAL [%s]: %s (confidence: %.0f%%, size: %.0f%%)",
                          trade_type.upper(), signal.reason, confidence * 100, size_mult * 100)
+
+        # ============================================================
+        # FIX 1: MOMENTUM ENTRY - Trade strong trends without S/R
+        # ============================================================
+        # If no S/R signal, check for momentum entry
+        if signal is None and self.momentum_entry_enabled:
+            signal = self._check_momentum_entry(
+                trend=trend,
+                momentum=recent_momentum,
+                pattern_bias=pattern_bias,
+                pattern_confidence=pattern_confidence,
+                current_close=current_close,
+                pip_value=pip_value,
+                highs=highs,
+                lows=lows
+            )
+
+        # ============================================================
+        # FIX 2: MA TOUCH ENTRY - Trade pullbacks to moving average
+        # ============================================================
+        if signal is None and self.ma_touch_enabled:
+            signal = self._check_ma_touch_entry(
+                closes=closes,
+                highs=highs,
+                lows=lows,
+                current_close=current_close,
+                pip_value=pip_value,
+                trend=trend,
+                momentum=recent_momentum
+            )
+
+        # ============================================================
+        # FIX 3: STRONG REJECTION ENTRY - Trade V-bottoms/tops
+        # ============================================================
+        if signal is None and self.strong_rejection_enabled:
+            signal = self._check_strong_rejection_entry(
+                opens=opens,
+                highs=highs,
+                lows=lows,
+                closes=closes,
+                current_close=current_close,
+                pip_value=pip_value
+            )
 
         if signal:
             self.set_cooldown(minutes=5)
@@ -837,6 +905,364 @@ class PriceActionStrategy:
             confidence += 0.10  # Momentum supports direction
 
         return min(1.0, confidence)
+
+    def _check_momentum_entry(self, trend: str, momentum: str, pattern_bias: Optional[str],
+                               pattern_confidence: float, current_close: float, pip_value: float,
+                               highs: np.ndarray, lows: np.ndarray) -> Optional[Signal]:
+        """
+        FIX 1: Momentum Entry - Enter strong trends without requiring S/R level.
+
+        This catches breakdowns/breakouts where:
+        - Strong trend is established
+        - Currency bias strongly aligns
+        - Momentum confirms direction
+        - Pattern analysis supports direction
+
+        A good trader sees "everything is bearish" and sells, without waiting for
+        price to touch a specific level.
+        """
+        # Check if we have strong enough currency bias
+        if self._bias_strength < self.momentum_min_bias_strength:
+            return None
+
+        # SELL momentum entry
+        if (trend in ["strong_downtrend", "downtrend"] and
+            self._currency_bias == "SELL" and
+            momentum == "bearish" and
+            pattern_bias == "SELL" and
+            pattern_confidence >= self.momentum_min_pattern_confidence):
+
+            # Calculate ATR-based stops (use recent volatility)
+            atr = self._calculate_atr(highs, lows, period=14)
+            atr_pips = atr / pip_value
+
+            # Tighter stops for momentum trades (1.5x ATR)
+            sl_pips = max(8, min(20, atr_pips * 1.5))
+            sl_price = current_close + (sl_pips * pip_value)
+
+            # TP = 2x SL for momentum trades (ride the trend)
+            tp_pips = sl_pips * 2.0
+            tp_price = current_close - (tp_pips * pip_value)
+
+            confidence = 0.65 + (pattern_confidence * 0.2) + (min(self._bias_strength, 10) / 100)
+
+            LOG.info("MOMENTUM SELL: trend=%s, bias=%.1f, momentum=%s, pattern=%s(%.2f)",
+                     trend, self._bias_strength, momentum, pattern_bias, pattern_confidence)
+
+            return Signal(
+                side="SELL",
+                reason=f"momentum_sell|trend={trend}|bias={self._bias_strength:.1f}|conf={confidence:.0%}",
+                entry_price=current_close,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                confidence=confidence,
+                trade_type="momentum",
+                size_multiplier=self.momentum_size_multiplier
+            )
+
+        # BUY momentum entry
+        elif (trend in ["strong_uptrend", "uptrend"] and
+              self._currency_bias == "BUY" and
+              momentum == "bullish" and
+              pattern_bias == "BUY" and
+              pattern_confidence >= self.momentum_min_pattern_confidence):
+
+            # Calculate ATR-based stops
+            atr = self._calculate_atr(highs, lows, period=14)
+            atr_pips = atr / pip_value
+
+            # Tighter stops for momentum trades (1.5x ATR)
+            sl_pips = max(8, min(20, atr_pips * 1.5))
+            sl_price = current_close - (sl_pips * pip_value)
+
+            # TP = 2x SL for momentum trades
+            tp_pips = sl_pips * 2.0
+            tp_price = current_close + (tp_pips * pip_value)
+
+            confidence = 0.65 + (pattern_confidence * 0.2) + (min(self._bias_strength, 10) / 100)
+
+            LOG.info("MOMENTUM BUY: trend=%s, bias=%.1f, momentum=%s, pattern=%s(%.2f)",
+                     trend, self._bias_strength, momentum, pattern_bias, pattern_confidence)
+
+            return Signal(
+                side="BUY",
+                reason=f"momentum_buy|trend={trend}|bias={self._bias_strength:.1f}|conf={confidence:.0%}",
+                entry_price=current_close,
+                sl_price=sl_price,
+                tp_price=tp_price,
+                confidence=confidence,
+                trade_type="momentum",
+                size_multiplier=self.momentum_size_multiplier
+            )
+
+        return None
+
+    def _calculate_atr(self, highs: np.ndarray, lows: np.ndarray, period: int = 14) -> float:
+        """Calculate Average True Range for volatility-based stops."""
+        if len(highs) < period:
+            return (highs[-1] - lows[-1])  # Fallback to current range
+
+        ranges = highs[-period:] - lows[-period:]
+        return np.mean(ranges)
+
+    def _invalidate_broken_patterns(self, patterns: List, current_price: float, pip_value: float) -> List:
+        """
+        FIX 4: Remove patterns that have been broken/invalidated.
+
+        If a double bottom was at 1.1850 but price is now at 1.1830 (20 pips below),
+        that double bottom is broken and should not influence signals.
+        """
+        from .pattern_recognition import PatternType
+
+        valid_patterns = []
+        invalidation_distance = self.pattern_invalidation_pips * pip_value
+
+        for pattern in patterns:
+            should_keep = True
+
+            # Check double bottom invalidation
+            if pattern.pattern_type == PatternType.DOUBLE_BOTTOM:
+                # Double bottom is invalidated if price is significantly below the troughs
+                if hasattr(pattern, 'key_level') and pattern.key_level:
+                    if current_price < pattern.key_level - invalidation_distance:
+                        LOG.info("Invalidating broken double bottom at %.5f (price=%.5f)",
+                                 pattern.key_level, current_price)
+                        should_keep = False
+
+            # Check double top invalidation
+            elif pattern.pattern_type == PatternType.DOUBLE_TOP:
+                # Double top is invalidated if price is significantly above the peaks
+                if hasattr(pattern, 'key_level') and pattern.key_level:
+                    if current_price > pattern.key_level + invalidation_distance:
+                        LOG.info("Invalidating broken double top at %.5f (price=%.5f)",
+                                 pattern.key_level, current_price)
+                        should_keep = False
+
+            if should_keep:
+                valid_patterns.append(pattern)
+
+        return valid_patterns
+
+    def _calculate_ema(self, closes: np.ndarray, period: int) -> np.ndarray:
+        """Calculate Exponential Moving Average."""
+        ema = np.zeros_like(closes)
+        multiplier = 2.0 / (period + 1)
+
+        # Start with SMA for first value
+        ema[period - 1] = np.mean(closes[:period])
+
+        # Calculate EMA for remaining values
+        for i in range(period, len(closes)):
+            ema[i] = (closes[i] - ema[i - 1]) * multiplier + ema[i - 1]
+
+        return ema
+
+    def _check_ma_touch_entry(self, closes: np.ndarray, highs: np.ndarray, lows: np.ndarray,
+                               current_close: float, pip_value: float,
+                               trend: str, momentum: str) -> Optional[Signal]:
+        """
+        FIX 2: MA Touch Entry - Enter when price pulls back to moving average in a trend.
+
+        This catches "rally then sell" or "dip then buy" setups where:
+        - Price is trending (established by trend structure)
+        - Price pulls back to touch the moving average
+        - MA acts as dynamic support/resistance
+
+        A good trader sees "price touched the 20 EMA in a downtrend" and sells.
+        """
+        if len(closes) < self.ma_period + 5:
+            return None
+
+        # Calculate EMA
+        ema = self._calculate_ema(closes, self.ma_period)
+        current_ema = ema[-1]
+
+        # Check if price is touching EMA (within tolerance)
+        ema_distance_pips = abs(current_close - current_ema) / pip_value
+
+        if ema_distance_pips > self.ma_touch_tolerance_pips:
+            return None  # Not touching EMA
+
+        # SELL: Downtrend + price rallied up to touch EMA from below
+        if (trend in ["strong_downtrend", "downtrend"] and
+            self._currency_bias == "SELL" and
+            current_close <= current_ema):  # At or just below EMA
+
+            # Confirm: Recent candles came UP to EMA (rally into resistance)
+            recent_lows = lows[-5:]
+            if not all(recent_lows[i] <= recent_lows[i + 1] for i in range(len(recent_lows) - 1)):
+                # Price was moving up (higher lows = rally)
+                atr = self._calculate_atr(highs, lows, period=14)
+                atr_pips = atr / pip_value
+
+                sl_pips = max(6, min(15, atr_pips * 1.2))
+                sl_price = current_ema + (sl_pips * pip_value)
+
+                tp_pips = sl_pips * 1.5  # Slightly tighter TP for pullback trades
+                tp_price = current_close - (tp_pips * pip_value)
+
+                confidence = 0.60
+                if self._bias_strength >= 5.0:
+                    confidence += 0.1
+                if momentum == "bearish":
+                    confidence += 0.05
+
+                LOG.info("MA TOUCH SELL: EMA=%.5f, price=%.5f, distance=%.1f pips",
+                         current_ema, current_close, ema_distance_pips)
+
+                return Signal(
+                    side="SELL",
+                    reason=f"ma_touch_sell|ema={current_ema:.5f}|trend={trend}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type="ma_touch",
+                    size_multiplier=self.ma_touch_size_multiplier
+                )
+
+        # BUY: Uptrend + price dipped down to touch EMA from above
+        elif (trend in ["strong_uptrend", "uptrend"] and
+              self._currency_bias == "BUY" and
+              current_close >= current_ema):  # At or just above EMA
+
+            # Confirm: Recent candles came DOWN to EMA (dip into support)
+            recent_highs = highs[-5:]
+            if not all(recent_highs[i] >= recent_highs[i + 1] for i in range(len(recent_highs) - 1)):
+                # Price was moving down (lower highs = dip)
+                atr = self._calculate_atr(highs, lows, period=14)
+                atr_pips = atr / pip_value
+
+                sl_pips = max(6, min(15, atr_pips * 1.2))
+                sl_price = current_ema - (sl_pips * pip_value)
+
+                tp_pips = sl_pips * 1.5
+                tp_price = current_close + (tp_pips * pip_value)
+
+                confidence = 0.60
+                if self._bias_strength >= 5.0:
+                    confidence += 0.1
+                if momentum == "bullish":
+                    confidence += 0.05
+
+                LOG.info("MA TOUCH BUY: EMA=%.5f, price=%.5f, distance=%.1f pips",
+                         current_ema, current_close, ema_distance_pips)
+
+                return Signal(
+                    side="BUY",
+                    reason=f"ma_touch_buy|ema={current_ema:.5f}|trend={trend}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type="ma_touch",
+                    size_multiplier=self.ma_touch_size_multiplier
+                )
+
+        return None
+
+    def _check_strong_rejection_entry(self, opens: np.ndarray, highs: np.ndarray,
+                                       lows: np.ndarray, closes: np.ndarray,
+                                       current_close: float, pip_value: float) -> Optional[Signal]:
+        """
+        FIX 3: Strong Rejection Entry - Enter on very strong rejection candles (V-bottoms/tops).
+
+        This catches sharp reversals where:
+        - Price makes a sudden spike low/high
+        - Very aggressive rejection (wick > 70% of candle)
+        - Even without being at a known S/R level
+
+        A good trader sees "massive rejection wick" and knows it's a potential reversal.
+        This is counter-trend so we use smaller size.
+        """
+        # Check the last closed candle
+        i = -2
+
+        body = abs(closes[i] - opens[i])
+        candle_range = highs[i] - lows[i]
+        lower_wick = min(opens[i], closes[i]) - lows[i]
+        upper_wick = highs[i] - max(opens[i], closes[i])
+
+        if candle_range == 0:
+            return None
+
+        # Calculate ATR for context
+        atr = self._calculate_atr(highs, lows, period=14)
+        atr_pips = atr / pip_value
+
+        # The rejection candle should be larger than average (significant move)
+        if candle_range < atr * 0.8:
+            return None  # Not significant enough
+
+        # ============================================================
+        # BULLISH STRONG REJECTION (V-bottom)
+        # ============================================================
+        lower_wick_ratio = lower_wick / candle_range
+        if lower_wick_ratio >= 0.70:  # Very strong rejection
+            # Close should be in upper portion
+            close_position = (closes[i] - lows[i]) / candle_range
+            if close_position >= 0.65:
+                # Calculate SL below the wick low
+                sl_price = lows[i] - (3 * pip_value)  # 3 pip buffer below wick
+
+                risk_pips = (current_close - sl_price) / pip_value
+                if risk_pips > 25:
+                    return None  # Risk too high
+
+                tp_pips = risk_pips * 1.2  # Conservative TP for counter-trend
+                tp_price = current_close + (tp_pips * pip_value)
+
+                confidence = 0.55 + (lower_wick_ratio - 0.70) * 0.5  # Bonus for extra strong wick
+
+                LOG.info("STRONG REJECTION BUY: wick_ratio=%.0f%%, candle_range=%.1f pips",
+                         lower_wick_ratio * 100, candle_range / pip_value)
+
+                return Signal(
+                    side="BUY",
+                    reason=f"strong_rejection_buy|wick={lower_wick_ratio:.0%}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type="strong_rejection",
+                    size_multiplier=self.strong_rejection_size_multiplier
+                )
+
+        # ============================================================
+        # BEARISH STRONG REJECTION (Inverted V-top)
+        # ============================================================
+        upper_wick_ratio = upper_wick / candle_range
+        if upper_wick_ratio >= 0.70:  # Very strong rejection
+            # Close should be in lower portion
+            close_position = (closes[i] - lows[i]) / candle_range
+            if close_position <= 0.35:
+                # Calculate SL above the wick high
+                sl_price = highs[i] + (3 * pip_value)  # 3 pip buffer above wick
+
+                risk_pips = (sl_price - current_close) / pip_value
+                if risk_pips > 25:
+                    return None  # Risk too high
+
+                tp_pips = risk_pips * 1.2  # Conservative TP for counter-trend
+                tp_price = current_close - (tp_pips * pip_value)
+
+                confidence = 0.55 + (upper_wick_ratio - 0.70) * 0.5  # Bonus for extra strong wick
+
+                LOG.info("STRONG REJECTION SELL: wick_ratio=%.0f%%, candle_range=%.1f pips",
+                         upper_wick_ratio * 100, candle_range / pip_value)
+
+                return Signal(
+                    side="SELL",
+                    reason=f"strong_rejection_sell|wick={upper_wick_ratio:.0%}|conf={confidence:.0%}",
+                    entry_price=current_close,
+                    sl_price=sl_price,
+                    tp_price=tp_price,
+                    confidence=confidence,
+                    trade_type="strong_rejection",
+                    size_multiplier=self.strong_rejection_size_multiplier
+                )
+
+        return None
 
     def get_dynamic_sl_tp(self) -> Tuple[float, float]:
         """Get SL and TP in pips based on recent volatility."""
