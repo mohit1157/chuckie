@@ -91,14 +91,34 @@ class ScalpingStrategy:
         self.ema_slow = cfg.strategy.slow_ema if hasattr(cfg.strategy, 'slow_ema') else 21
         self.rsi_period = 14
         self.atr_period = 14
+        self.min_confirmations = getattr(cfg.strategy, "min_confirmations", self.MIN_CONFIRMATIONS)
+        self.high_precision_mode = getattr(cfg.strategy, "high_precision_mode", True)
+        self.min_adx = getattr(cfg.strategy, "min_adx", 20.0)
+        self.min_rsi_buy = getattr(cfg.strategy, "min_rsi_buy", 40.0)
+        self.max_rsi_buy = getattr(cfg.strategy, "max_rsi_buy", 70.0)
+        self.min_rsi_sell = getattr(cfg.strategy, "min_rsi_sell", 30.0)
+        self.max_rsi_sell = getattr(cfg.strategy, "max_rsi_sell", 60.0)
+        self.max_spread_pips = getattr(cfg.strategy, "max_spread_pips", 1.5)
+        self.cooldown_minutes = getattr(cfg.strategy, "cooldown_minutes", 5)
+        if self.high_precision_mode:
+            self.min_confirmations = max(self.min_confirmations, 6)
         # R:R ratio for profitability
-        self.atr_sl_multiplier = 1.0  # Base multiplier (will be doubled in get_dynamic_sl_tp)
-        self.atr_tp_multiplier = 1.5  # Base multiplier (1.5:1 R:R)
+        self.atr_sl_multiplier = getattr(cfg.strategy, "atr_sl_multiplier", 1.0)
+        self.atr_tp_multiplier = getattr(cfg.strategy, "atr_tp_multiplier", 1.5)
 
     def is_trading_session(self) -> bool:
         """Check if current time is during high-liquidity session."""
         now = datetime.now(timezone.utc)
         hour = now.hour
+
+        if hasattr(self.cfg, "session") and self.cfg.session and not self.cfg.session.enabled:
+            return True
+
+        if hasattr(self.cfg, "session") and self.cfg.session:
+            if self.cfg.session.overlap_only:
+                return 12 <= hour < 16
+            if self.cfg.session.london_only:
+                return self.LONDON_OPEN <= hour < self.LONDON_CLOSE
 
         # Best times: London session or London/NY overlap
         london_session = self.LONDON_OPEN <= hour < self.LONDON_CLOSE
@@ -108,7 +128,7 @@ class ScalpingStrategy:
         asian_session = 0 <= hour < 7  # Sydney/Tokyo
 
         # Allow all major sessions (set to False to disable Asian)
-        allow_asian = True  # Enable for testing
+        allow_asian = not self.high_precision_mode
 
         if allow_asian:
             return True  # Trade 24/7 for now
@@ -146,8 +166,8 @@ class ScalpingStrategy:
         if ema_distance <= ind.atr * 0.5:
             confirmations.append("pullback_to_ema")
 
-        # 3. RSI in buy zone (40-70)
-        if 40 <= ind.rsi <= 70:
+        # 3. RSI in buy zone
+        if self.min_rsi_buy <= ind.rsi <= self.max_rsi_buy:
             confirmations.append("rsi_buy_zone")
 
         # 4. MACD positive momentum
@@ -159,7 +179,7 @@ class ScalpingStrategy:
             confirmations.append("stoch_bullish")
 
         # 6. ADX showing trend strength
-        if ind.adx > 20 and ind.plus_di > ind.minus_di:
+        if ind.adx > self.min_adx and ind.plus_di > ind.minus_di:
             confirmations.append("adx_trend")
 
         # 7. Price action: Current candle bullish (close > open approximation)
@@ -182,8 +202,8 @@ class ScalpingStrategy:
         if ema_distance <= ind.atr * 0.5:
             confirmations.append("pullback_to_ema")
 
-        # 3. RSI in sell zone (30-60)
-        if 30 <= ind.rsi <= 60:
+        # 3. RSI in sell zone
+        if self.min_rsi_sell <= ind.rsi <= self.max_rsi_sell:
             confirmations.append("rsi_sell_zone")
 
         # 4. MACD negative momentum
@@ -195,7 +215,7 @@ class ScalpingStrategy:
             confirmations.append("stoch_bearish")
 
         # 6. ADX showing trend strength
-        if ind.adx > 20 and ind.minus_di > ind.plus_di:
+        if ind.adx > self.min_adx and ind.minus_di > ind.plus_di:
             confirmations.append("adx_trend")
 
         # 7. Price action: Current candle bearish
@@ -206,6 +226,16 @@ class ScalpingStrategy:
 
     def get_signal(self) -> Optional[Signal]:
         """Generate trading signal with multi-confirmation."""
+
+        # Spread filter (tight spreads improve accuracy for scalping)
+        tick = self.mt5.symbol_info_tick(self.cfg.symbol)
+        info = self.mt5.symbol_info(self.cfg.symbol)
+        if tick and info:
+            pip_value = info.point * 10
+            spread_pips = (tick.ask - tick.bid) / pip_value if pip_value else 0.0
+            if spread_pips > self.max_spread_pips:
+                LOG.info("Spread too wide: %.2f pips > %.2f pips", spread_pips, self.max_spread_pips)
+                return None
 
         # Session filter
         if not self.is_trading_session():
@@ -256,11 +286,11 @@ class ScalpingStrategy:
         signal = None
         potential_direction = None
 
-        if len(buy_confirmations) >= self.MIN_CONFIRMATIONS and buy_confidence > sell_confidence:
+        if len(buy_confirmations) >= self.min_confirmations and buy_confidence > sell_confidence:
             potential_direction = "BUY"
             reason = f"scalp_buy|conf={buy_confidence:.0f}%|{','.join(buy_confirmations[:3])}"
 
-        elif len(sell_confirmations) >= self.MIN_CONFIRMATIONS and sell_confidence > buy_confidence:
+        elif len(sell_confirmations) >= self.min_confirmations and sell_confidence > buy_confidence:
             potential_direction = "SELL"
             reason = f"scalp_sell|conf={sell_confidence:.0f}%|{','.join(sell_confirmations[:3])}"
 
@@ -291,7 +321,7 @@ class ScalpingStrategy:
 
         if signal:
             # Set cooldown to prevent overtrading (increased from 3 to 5 minutes)
-            self.set_cooldown(minutes=5)
+            self.set_cooldown(minutes=self.cooldown_minutes)
 
         return signal
 
