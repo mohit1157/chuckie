@@ -56,7 +56,6 @@ class StrategyConfig:
     use_dynamic_sl_tp: bool = True
     atr_sl_multiplier: float = 1.5
     atr_tp_multiplier: float = 1.0
-    atr_tp_multiplier: float = 1.0
     cooldown_minutes: int = 3
     strong_rejection_enabled: bool = False
     
@@ -164,6 +163,7 @@ class AppConfig:
                 partial_profit=PartialProfitConfig(
                     enabled=raw["trade"].get("partial_profit", {}).get("enabled", True),
                     profit_pct=raw["trade"].get("partial_profit", {}).get("profit_pct", 0.15),
+                    profit_pips=raw["trade"].get("partial_profit", {}).get("profit_pips", 5.0),
                     close_pct=raw["trade"].get("partial_profit", {}).get("close_pct", 0.80),
                     move_sl_to_profit=raw["trade"].get("partial_profit", {}).get("move_sl_to_profit", True),
                 ),

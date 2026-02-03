@@ -349,7 +349,7 @@ class ScalpingBot:
         if strategy_name == "price_action":
             self.strategy = PriceActionStrategy(cfg, self.mt5)
             LOG.info("Using PRICE ACTION strategy (S/R + candle patterns)")
-        elif cfg.strategy.min_confirmations >= 6:
+        elif getattr(cfg.strategy, "high_precision_mode", False) or cfg.strategy.min_confirmations >= 6:
             self.strategy = ConservativeScalpingStrategy(cfg, self.mt5)
             LOG.info("Using CONSERVATIVE strategy (6+ confirmations)")
         else:
@@ -390,7 +390,7 @@ class ScalpingBot:
         strategy_name = getattr(self.cfg.strategy, 'name', 'high_probability_scalping')
         if strategy_name == "price_action":
             self.strategy = PriceActionStrategy(self.cfg, self.mt5)
-        elif self.cfg.strategy.min_confirmations >= 6:
+        elif getattr(self.cfg.strategy, "high_precision_mode", False) or self.cfg.strategy.min_confirmations >= 6:
             self.strategy = ConservativeScalpingStrategy(self.cfg, self.mt5)
         else:
             self.strategy = ScalpingStrategy(self.cfg, self.mt5)
