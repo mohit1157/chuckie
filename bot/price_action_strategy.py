@@ -969,16 +969,18 @@ class PriceActionStrategy:
         strong_bullish = 0
         strong_bearish = 0
         for i in range(-lookback, 0):
-            body = abs(closes[i] - closes[i-1]) if i > -lookback else abs(closes[i] - closes[-lookback-1])
             candle_range = highs[i] - lows[i]
             if candle_range > 0:
-                body_ratio = abs(closes[i] - lows[i]) / candle_range if closes[i] > closes[i-1] if i > -lookback else closes[i] > closes[-lookback-1] else abs(highs[i] - closes[i]) / candle_range
-            if closes[i] > (highs[i] + lows[i]) / 2:  # Close in upper half = bullish
-                if (closes[i] - lows[i]) / candle_range > 0.6 if candle_range > 0 else False:
-                    strong_bullish += 1
-            else:  # Close in lower half = bearish
-                if (highs[i] - closes[i]) / candle_range > 0.6 if candle_range > 0 else False:
-                    strong_bearish += 1
+                # Check if bullish (close in upper half) or bearish (close in lower half)
+                is_bullish = closes[i] > (highs[i] + lows[i]) / 2
+                if is_bullish:
+                    # Bullish candle: body ratio from low to close
+                    if (closes[i] - lows[i]) / candle_range > 0.6:
+                        strong_bullish += 1
+                else:
+                    # Bearish candle: body ratio from high to close
+                    if (highs[i] - closes[i]) / candle_range > 0.6:
+                        strong_bearish += 1
 
         # Block conditions:
         if signal_side == "SELL":
