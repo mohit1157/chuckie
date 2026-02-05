@@ -4,34 +4,36 @@
 
 mode: demo  # Change to 'live' for real trading
 symbol: "EURUSD"
-timeframe: "M3"  # 3-minute for scalping
+timeframe: "M1"  # 1-minute for aggressive scalping
 magic: 80808080  # Unique magic number for this strategy
 
-# Risk Management - Confident sizing with precise entries
+# Risk Management - Pepperstone Demo $50k, 1:1 leverage
 risk:
-  account_risk_per_trade: 0.015  # FIX: Reduced to 1.5%
-  max_spread_points: 25
-  max_open_positions: 1
-  max_daily_loss_pct: 0.03  # FIX: Reduced to 3% daily limit
-  max_lot_size: 3.0  # FIX: Capped at 3 lots
+  account_risk_per_trade: 0.005  # 0.5% per trade (smaller for more frequent trades)
+  max_spread_points: 15          # Pepperstone has tighter spreads
+  max_open_positions: 5          # Allow more concurrent scalps
+  max_daily_loss_pct: 0.05       # 5% daily limit ($2500)
+  max_lot_size: 0.3              # Smaller lots to allow more positions
 
-# Trade Parameters - WIDER SL/TP for stability
-# 5 pip SL was getting hit by market noise - need more room
+# Trade Parameters - TRUE SCALPING: One candle, instant decision
+# Dynamic SL/TP based on spread (Pepperstone allows tight stops):
+#   Tight spread (<1.5 pip): SL=3, TP=4
+#   Wide spread (>1.5 pip):  SL=4, TP=5
 trade:
-  sl_pips: 15   # Wider SL (was 8 - too tight)
-  tp_pips: 22   # Larger TP for 1.5:1 R:R
+  sl_pips: 3    # Default tight SL - adjusted dynamically by spread
+  tp_pips: 4    # Default tight TP - adjusted dynamically by spread
   trailing_stop:
-    enabled: true
-    start_pips: 5   # Start trailing earlier (was 10 - too late)
-    trail_pips: 3   # Trail tighter (was 7 - gave back too much)
+    enabled: false  # No trailing for scalping - just hit TP fast
+    start_pips: 3
+    trail_pips: 2
   # Advanced exit rules
-  exit_on_ema_cross: true      # Exit if 2+ candles close below EMA(9)
-  exit_on_structure_break: false # Disabled
+  exit_on_ema_cross: false     # Disabled - trust the TP/SL
+  exit_on_structure_break: false
   partial_profit:
-    enabled: false              # Let winners run to TP
+    enabled: false
     profit_pct: 0.10
     close_pct: 0.50
-    move_sl_to_profit: true
+    move_sl_to_profit: false
 
 # Strategy Configuration
 strategy:
@@ -40,31 +42,30 @@ strategy:
   slow_ema: 21  # Slow EMA for trend confirmation
   breakout_lookback: 10
 
-  # Scalping-specific settings
-  min_confirmations: 6  # Require 6/7 confirmations (increased from 5)
-  use_dynamic_sl_tp: true  # Use ATR-based SL/TP
-  atr_sl_multiplier: 1.5  # SL = 1.5 * ATR
-  atr_tp_multiplier: 1.0  # TP = 1.0 * ATR
-  cooldown_minutes: 5  # Wait 5 min between trades (was 3)
-  strong_rejection_enabled: false  # FIX: Disabled due to 0% win rate
+  # Scalping-specific settings - AGGRESSIVE
+  min_confirmations: 2  # Minimal confirmations - trust the entry
+  use_dynamic_sl_tp: false  # Use fixed SL/TP for consistency
+  atr_sl_multiplier: 1.0
+  atr_tp_multiplier: 0.8
+  cooldown_minutes: 0  # NO cooldown - instant re-entry allowed
+  strong_rejection_enabled: false
 
-  # FIX 16: High Precision Mode - MUST BE ENABLED
-  high_precision_mode: true       # Enable strict filtering for 85% win rate
-  min_adx: 20.0                   # Market must be trending (ADX > 20)
-  max_rsi_buy: 70.0               # Don't buy when overbought
-  min_rsi_buy: 40.0               # Don't buy when oversold
-  max_rsi_sell: 60.0              # Don't sell when oversold
-  min_rsi_sell: 30.0              # Don't sell when overbought
-  max_spread_pips: 2.0            # Max spread allowed (slightly relaxed from 1.5)
+  # High Precision Mode - DISABLED for aggressive scalping
+  high_precision_mode: false      # Allow more trades
+  min_adx: 10.0                   # Trade even in low volatility
+  max_rsi_buy: 75.0               # More relaxed RSI limits
+  min_rsi_buy: 30.0
+  max_rsi_sell: 70.0
+  min_rsi_sell: 25.0
+  max_spread_pips: 4.0            # Allow trades with wider spreads
 
-# Session Filter - CRITICAL: Only trade during good sessions
-# Sydney session (score 10/100) caused all the losses!
+# Session Filter - DISABLED: A good trader profits in any session
 session:
-  enabled: true
+  enabled: false  # Trade all sessions
   london_only: false
   overlap_only: false
   avoid_news_times: true
-  min_session_quality: 40  # Don't trade below this score (40/100)
+  min_session_quality: 0  # No minimum
 
 # News Filter
 news_filter:

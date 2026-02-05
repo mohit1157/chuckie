@@ -24,10 +24,19 @@ class MT5Client:
 
     @retry(stop=stop_after_attempt(5), wait=wait_fixed(2))
     def connect(self) -> None:
+        # First try to initialize and use already logged-in MT5
         if not mt5.initialize():
             code, msg = mt5.last_error()
             raise MT5Error(f"MT5 initialize failed: {code} {msg}")
 
+        # Check if MT5 is already logged in
+        account = mt5.account_info()
+        if account is not None:
+            LOG.info("Using existing MT5 session: login=%s server=%s", account.login, account.server)
+            self._connected = True
+            return
+
+        # If not logged in, try to login with credentials
         login = os.getenv("MT5_LOGIN")
         password = os.getenv("MT5_PASSWORD")
         server = os.getenv("MT5_SERVER")

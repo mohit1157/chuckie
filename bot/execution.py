@@ -88,7 +88,7 @@ class ExecutionEngine:
         req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": self.cfg.symbol, "volume": float(lots),
                "type": order_type, "price": float(price), "sl": float(sl), "tp": float(tp),
                "deviation": 20, "magic": self.cfg.magic, "comment": sig.reason,
-               "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_FOK}
+               "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC}
 
         res = self.mt5.order_send(req)
         if res is None:

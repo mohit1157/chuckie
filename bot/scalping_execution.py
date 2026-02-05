@@ -344,7 +344,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": "partial_80",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         res = self.mt5.order_send(req)
@@ -441,7 +441,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": safe_reason,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         res = self.mt5.order_send(req)
@@ -509,7 +509,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         # Log order details for debugging
@@ -645,7 +645,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         LOG.info("Order request: %s %s %.2f lots @ %.5f SL=%.5f TP=%.5f",
@@ -796,7 +796,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": safe_reason,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         res = self.mt5.order_send(req)
@@ -834,7 +834,7 @@ class ScalpingExecutionEngine:
             "magic": self.cfg.magic,
             "comment": "partial_close",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         res = self.mt5.order_send(req)

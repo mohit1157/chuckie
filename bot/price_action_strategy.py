@@ -575,7 +575,8 @@ class PriceActionStrategy:
                  signal = None
 
         if signal:
-            self.set_cooldown(minutes=5)
+            # NO cooldown for scalping - allow continuous trading
+            # self.set_cooldown(minutes=0)
 
             # Record this level touch for future reference
             if signal.side == "BUY" and nearest_support:

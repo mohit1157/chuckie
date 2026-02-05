@@ -26,7 +26,7 @@ from .monitoring import setup_logging, log_health
 from .mt5_client import MT5Client
 from .scalping_execution import ScalpingExecutionEngine
 from .scalping_strategy import ScalpingStrategy, ConservativeScalpingStrategy
-from .price_action_strategy import PriceActionStrategy
+from .price_action_strategy import PriceActionStrategy, Signal
 from .news import NewsFilter
 from .risk import RiskManager
 from .trade_logger import TradeLogger
@@ -368,6 +368,124 @@ class ScalpingBot:
         self._last_pair_check = None
         self._pair_check_interval = 300  # Check every 5 minutes (seconds)
 
+        # Momentum scalping parameters
+        self._last_tick_price = None
+        self._tick_move_accumulator = 0.0  # Accumulates price movement
+        self._momentum_threshold_pips = 1.5  # Minimum momentum to trigger trade
+        self._last_candle_time = None
+
+    def _get_dynamic_sl_tp(self, symbol: str) -> tuple:
+        """
+        Get dynamic SL/TP based on current spread.
+
+        Pepperstone has zero/low stop levels - allows tight scalping.
+        Tight spread (<1.5 pip): SL=3, TP=4
+        Wide spread (>1.5 pip):  SL=4, TP=5
+        """
+        info = self.mt5.symbol_info(symbol)
+        if info is None:
+            return self.cfg.trade.sl_pips, self.cfg.trade.tp_pips
+
+        # Calculate spread in pips
+        spread_points = info.spread
+        spread_pips = spread_points / 10.0  # Convert points to pips
+
+        # Pepperstone allows tight stops - true scalping possible
+        if spread_pips < 1.5:
+            # Tight spread - use tight stops for scalping
+            sl_pips = 3.0
+            tp_pips = 4.0
+        else:
+            # Wide spread - slightly bigger stops
+            sl_pips = 4.0
+            tp_pips = 5.0
+
+        LOG.info("Spread=%.1f pips -> SL=%.1f, TP=%.1f", spread_pips, sl_pips, tp_pips)
+
+        return sl_pips, tp_pips
+
+    def _detect_momentum_candle(self, symbol: str) -> tuple:
+        """
+        Detect EARLY momentum - catch moves at the START, not after they complete.
+
+        Key insight: Enter when momentum is BUILDING (0.8-1.5 pips), not after
+        a big move completes (2+ pips) when pullback is imminent.
+
+        Returns:
+            (has_momentum, direction, candle_size_pips)
+        """
+        tick = self.mt5.symbol_info_tick(symbol)
+        info = self.mt5.symbol_info(symbol)
+        if tick is None or info is None:
+            return False, None, 0.0
+
+        current_price = (tick.bid + tick.ask) / 2
+        pip_value = info.point * 10
+
+        # Get current forming candle AND previous candle
+        bars = self.mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 3)
+        if bars is None or len(bars) < 3:
+            return False, None, 0.0
+
+        current_bar = bars[-1]
+        prev_bar = bars[-2]
+
+        candle_open = current_bar['open']
+        candle_high = current_bar['high']
+        candle_low = current_bar['low']
+
+        prev_close = prev_bar['close']
+        prev_range = (prev_bar['high'] - prev_bar['low']) / pip_value
+
+        # Calculate current candle metrics
+        current_move_pips = abs(current_price - candle_open) / pip_value
+        candle_range_pips = (candle_high - candle_low) / pip_value
+
+        # Determine direction
+        if current_price > candle_open:
+            direction = "BUY"
+        elif current_price < candle_open:
+            direction = "SELL"
+        else:
+            direction = None
+
+        spread_pips = info.spread / 10.0
+
+        # EARLY MOMENTUM DETECTION:
+        # - Enter when move is 0.8-1.5 pips (catching early momentum)
+        # - Price should be moving AWAY from open (not retracing)
+        # - Previous candle should be smaller (this one is accelerating)
+
+        min_early_momentum = 0.8 if spread_pips < 1.5 else 1.2
+        max_early_momentum = 2.0 if spread_pips < 1.5 else 2.5  # Don't enter late
+
+        # Check for EARLY momentum (before the big move completes)
+        is_early_momentum = (
+            current_move_pips >= min_early_momentum and
+            current_move_pips <= max_early_momentum and  # Not too late!
+            direction is not None and
+            candle_range_pips > prev_range * 0.8  # Current candle is expanding
+        )
+
+        # Also check: is price at extreme of candle? (momentum still going)
+        if direction == "BUY":
+            at_extreme = (current_price >= candle_high - (0.3 * pip_value))
+        elif direction == "SELL":
+            at_extreme = (current_price <= candle_low + (0.3 * pip_value))
+        else:
+            at_extreme = False
+
+        has_momentum = is_early_momentum and at_extreme
+
+        if has_momentum:
+            LOG.info("EARLY MOMENTUM DETECTED: %s %.1f pips (range: 0.8-2.0) - catching move early!",
+                     direction, current_move_pips)
+        elif current_move_pips > max_early_momentum:
+            LOG.debug("Momentum move too late (%.1f pips > %.1f max) - waiting for pullback",
+                     current_move_pips, max_early_momentum)
+
+        return has_momentum, direction, current_move_pips
+
     def _setup_signal_handlers(self):
         """Setup graceful shutdown handlers."""
         signal.signal(signal.SIGINT, self._handle_shutdown)
@@ -628,14 +746,27 @@ class ScalpingBot:
                     if hasattr(self.strategy, 'set_currency_bias'):
                         self.strategy.set_currency_bias(bias_direction, bias_strength)
 
+                # MOMENTUM SCALPING: First check for momentum candle
+                has_momentum, momentum_dir, candle_size = self._detect_momentum_candle(self.cfg.symbol)
+
                 # Get signal from strategy
                 sig = self.strategy.get_signal()
+
+                # If strategy gives signal, check if momentum confirms it
                 if sig is not None:
                     # Log trade type info
                     trade_type = getattr(sig, 'trade_type', 'unknown')
                     size_mult = getattr(sig, 'size_multiplier', 1.0)
                     LOG.info("Signal: %s %s [%s] - size multiplier: %.0f%%",
                              sig.side, self.cfg.symbol, trade_type.upper(), size_mult * 100)
+
+                    # Check if momentum confirms the signal direction
+                    if has_momentum and momentum_dir == sig.side:
+                        LOG.info("MOMENTUM CONFIRMS SIGNAL: %s (candle: %.1f pips)", sig.side, candle_size)
+                    elif has_momentum and momentum_dir != sig.side:
+                        LOG.info("Signal direction (%s) conflicts with momentum (%s) - skipping",
+                                 sig.side, momentum_dir)
+                        sig = None  # Don't trade against momentum
 
                     # Validate against market intelligence (for volatility/VIX checks only)
                     if sig and self._use_market_intel and self.market_intel:
@@ -646,12 +777,22 @@ class ScalpingBot:
                             LOG.info("Signal rejected by market intel: %s", reason)
                             sig = None
 
+                # If no strategy signal but strong momentum detected, create momentum signal
+                if sig is None and has_momentum:
+                    sig = Signal(
+                        side=momentum_dir,
+                        reason=f"momentum_scalp|size={candle_size:.1f}pips",
+                        confidence=0.7,
+                        trade_type="momentum_scalp",
+                        size_multiplier=0.8  # Slightly smaller for pure momentum trades
+                    )
+                    LOG.info("PURE MOMENTUM TRADE: %s %s (%.1f pips move)",
+                             momentum_dir, self.cfg.symbol, candle_size)
+
                 if sig is not None:
-                    # Get dynamic SL/TP if enabled
-                    if self.cfg.strategy.use_dynamic_sl_tp:
-                        sl_pips, tp_pips = self.strategy.get_dynamic_sl_tp()
-                    else:
-                        sl_pips, tp_pips = self.cfg.trade.sl_pips, self.cfg.trade.tp_pips
+                    # Use dynamic SL/TP based on spread
+                    sl_pips, tp_pips = self._get_dynamic_sl_tp(self.cfg.symbol)
+                    LOG.info("Dynamic SL/TP: SL=%.1f pips, TP=%.1f pips", sl_pips, tp_pips)
 
                     # Adjust position size based on volatility
                     size_multiplier = 1.0

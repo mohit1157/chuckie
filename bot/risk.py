@@ -17,9 +17,9 @@ class RiskManager:
         self._session_filter = SessionFilter()
         self._last_max_pos_log = 0  # Throttle max positions logging
 
-        # FIX 7: Cooldown after position closes to prevent immediate re-entry
+        # FIX 7: Cooldown after position closes (DISABLED for scalping)
         self._cooldown_until: float = 0  # Unix timestamp
-        self._cooldown_minutes = 3  # Wait 3 minutes after any position closes
+        self._cooldown_minutes = 0  # NO cooldown for scalping - instant re-entry allowed
         self._last_position_count = 0  # Track position changes
 
     def refresh_daily_circuit_breaker(self) -> None:

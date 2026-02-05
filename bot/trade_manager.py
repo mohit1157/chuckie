@@ -432,7 +432,7 @@ class SmartTradeManager:
             "magic": self.cfg.magic,
             "comment": reason[:20],
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK,
+            "type_filling": mt5.ORDER_FILLING_IOC,
         }
 
         res = self.mt5.order_send(req)

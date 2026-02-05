@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clone:*)",
+      "Bash(python -m venv:*)",
+      "Bash(.venv/Scripts/pip:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nRate limit Twitter API to stay within free tier \\(500 posts/month\\)\n\n- Reduce monitored accounts from 6 to 2 \\(DeItaone, FirstSquawk\\)\n- Increase cache duration from 2 min to 3 hours\n- Add daily request counter with 8 requests/day limit\n- Log quota usage for monitoring\n\nThis ensures ~16 requests/day max = 480/month, safely under the 500 limit.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd free RSS news feeds \\(no API limits\\)\n\n- Add free_news_feeds.py: Fetches from ForexLive, FXStreet, Investing.com\n- Update news.py to use RSS as primary source \\(always available\\)\n- RSS feeds have no API limits, no keys required\n- Weighted RSS sentiment higher since it''s reliable\n\nTwitter/Reddit remain optional but may fail on free tiers.\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit:*)",
+      "Bash(python -m bot.dynamic_bot:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(.venvScriptspip.exe install openai==1.59.3)",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie && .venv\\\\Scripts\\\\pip.exe install openai==1.59.3\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie\\\\.venv\\\\Scripts\\\\pip.exe install openai\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie\\\\.venv\\\\Scripts\\\\pip.exe list | findstr openai\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie\\\\.venv\\\\Scripts\\\\python.exe -c \"\"import openai; print\\(openai.__version__\\)\"\"\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie\\\\.venv\\\\Scripts\\\\pip.exe show openai 2>&1\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie && git status\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie && git diff --stat\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie && git log --oneline -3\")",
+      "Bash(cmd.exe /c \"cd /d C:\\\\Users\\\\mohea\\\\Downloads\\\\chuckie\\\\chuckie && git status && echo --- && git diff --stat && echo --- && git log --oneline -3\")",
+      "Bash(git init:*)"
+    ]
+  }
+}
