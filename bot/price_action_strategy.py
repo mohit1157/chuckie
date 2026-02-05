@@ -566,6 +566,13 @@ class PriceActionStrategy:
                 signal = None
 
         # ============================================================
+        # FIX: STRONG MOMENTUM FILTER - Never trade against strong recent moves
+        # ============================================================
+        if signal is not None:
+            if self._check_strong_momentum_against(highs, lows, closes, signal.side, pip_value):
+                signal = None  # Block logged inside the function
+
+        # ============================================================
         # FIX HIGH PRECISION: Apply strict filters for 85% win rate
         # ============================================================
         if signal is not None:
@@ -939,6 +946,64 @@ class PriceActionStrategy:
             return "bearish"
         else:
             return "neutral"
+
+    def _check_strong_momentum_against(self, highs: np.ndarray, lows: np.ndarray,
+                                        closes: np.ndarray, signal_side: str, pip_value: float) -> bool:
+        """
+        Check if there's STRONG recent momentum against our signal direction.
+        This prevents selling into a strong rally or buying into a strong dump.
+
+        Returns True if we should BLOCK the trade (strong momentum against us).
+        """
+        # Look at last 10 candles for strong momentum
+        lookback = 10
+
+        # Calculate total move in pips
+        total_move_pips = (closes[-1] - closes[-lookback]) / pip_value
+
+        # Calculate average candle size
+        candle_sizes = [(highs[i] - lows[i]) / pip_value for i in range(-lookback, 0)]
+        avg_candle_size = sum(candle_sizes) / len(candle_sizes)
+
+        # Count strong bullish/bearish candles (body > 50% of range)
+        strong_bullish = 0
+        strong_bearish = 0
+        for i in range(-lookback, 0):
+            body = abs(closes[i] - closes[i-1]) if i > -lookback else abs(closes[i] - closes[-lookback-1])
+            candle_range = highs[i] - lows[i]
+            if candle_range > 0:
+                body_ratio = abs(closes[i] - lows[i]) / candle_range if closes[i] > closes[i-1] if i > -lookback else closes[i] > closes[-lookback-1] else abs(highs[i] - closes[i]) / candle_range
+            if closes[i] > (highs[i] + lows[i]) / 2:  # Close in upper half = bullish
+                if (closes[i] - lows[i]) / candle_range > 0.6 if candle_range > 0 else False:
+                    strong_bullish += 1
+            else:  # Close in lower half = bearish
+                if (highs[i] - closes[i]) / candle_range > 0.6 if candle_range > 0 else False:
+                    strong_bearish += 1
+
+        # Block conditions:
+        if signal_side == "SELL":
+            # Block SELL if strong bullish momentum
+            if total_move_pips > 5 and strong_bullish >= 4:
+                LOG.warning("STRONG MOMENTUM BLOCK: Cannot SELL - price rallied %.1f pips with %d strong bullish candles",
+                           total_move_pips, strong_bullish)
+                return True
+            if total_move_pips > 10:  # Very strong move up
+                LOG.warning("STRONG MOMENTUM BLOCK: Cannot SELL - price rallied %.1f pips (>10 pip move)",
+                           total_move_pips)
+                return True
+
+        elif signal_side == "BUY":
+            # Block BUY if strong bearish momentum
+            if total_move_pips < -5 and strong_bearish >= 4:
+                LOG.warning("STRONG MOMENTUM BLOCK: Cannot BUY - price dropped %.1f pips with %d strong bearish candles",
+                           abs(total_move_pips), strong_bearish)
+                return True
+            if total_move_pips < -10:  # Very strong move down
+                LOG.warning("STRONG MOMENTUM BLOCK: Cannot BUY - price dropped %.1f pips (>10 pip move)",
+                           abs(total_move_pips))
+                return True
+
+        return False  # No block
 
     def _calculate_confidence(self, at_level: bool, rejection: bool, engulfing: bool,
                               trend_aligned: bool, momentum_aligned: bool) -> float:
