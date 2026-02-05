@@ -15,13 +15,12 @@ risk:
   max_daily_loss_pct: 0.05       # 5% daily limit ($2500)
   max_lot_size: 0.3              # Smaller lots to allow more positions
 
-# Trade Parameters - TRUE SCALPING: One candle, instant decision
-# Dynamic SL/TP based on spread (Pepperstone allows tight stops):
-#   Tight spread (<1.5 pip): SL=3, TP=4
-#   Wide spread (>1.5 pip):  SL=4, TP=5
+# Trade Parameters - MOMENTUM CATCHING: Tight SL, Big TP
+# Strategy: Catch big moves early, cut losses quick if wrong
+# Risk/Reward = 1:3 or better (3 pip SL, 10+ pip TP)
 trade:
-  sl_pips: 3    # Default tight SL - adjusted dynamically by spread
-  tp_pips: 4    # Default tight TP - adjusted dynamically by spread
+  sl_pips: 3    # Tight SL - cut losses quick if wrong
+  tp_pips: 10   # Big TP - let winners run to catch momentum moves
   trailing_stop:
     enabled: false  # No trailing for scalping - just hit TP fast
     start_pips: 3

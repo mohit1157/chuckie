@@ -378,9 +378,13 @@ class ScalpingBot:
         """
         Get dynamic SL/TP based on current spread.
 
+        MOMENTUM CATCHING STRATEGY: Tight SL, Big TP
+        - Catch big moves early, cut losses quick if wrong
+        - Risk/Reward = 1:3 or better (3 pip SL, 10 pip TP)
+
         Pepperstone has zero/low stop levels - allows tight scalping.
-        Tight spread (<1.5 pip): SL=3, TP=4
-        Wide spread (>1.5 pip):  SL=4, TP=5
+        Tight spread (<1.5 pip): SL=3, TP=10
+        Wide spread (>1.5 pip):  SL=4, TP=10
         """
         info = self.mt5.symbol_info(symbol)
         if info is None:
@@ -390,17 +394,18 @@ class ScalpingBot:
         spread_points = info.spread
         spread_pips = spread_points / 10.0  # Convert points to pips
 
-        # Pepperstone allows tight stops - true scalping possible
+        # MOMENTUM CATCHING: Tight SL, Big TP to catch big moves
         if spread_pips < 1.5:
-            # Tight spread - use tight stops for scalping
+            # Tight spread - ultra tight stop, big target
             sl_pips = 3.0
-            tp_pips = 4.0
+            tp_pips = 10.0  # Let winners run!
         else:
-            # Wide spread - slightly bigger stops
+            # Wide spread - slightly bigger stop, same target
             sl_pips = 4.0
-            tp_pips = 5.0
+            tp_pips = 10.0  # Still aim for big moves
 
-        LOG.info("Spread=%.1f pips -> SL=%.1f, TP=%.1f", spread_pips, sl_pips, tp_pips)
+        LOG.info("Spread=%.1f pips -> SL=%.1f, TP=%.1f (R:R = 1:%.1f)",
+                 spread_pips, sl_pips, tp_pips, tp_pips/sl_pips)
 
         return sl_pips, tp_pips
 
