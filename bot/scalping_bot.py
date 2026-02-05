@@ -411,10 +411,12 @@ class ScalpingBot:
 
     def _detect_momentum_candle(self, symbol: str) -> tuple:
         """
-        Detect EARLY momentum - catch moves at the START, not after they complete.
+        Detect EARLY momentum - catch moves at the VERY START before big candle forms.
 
-        Key insight: Enter when momentum is BUILDING (0.8-1.5 pips), not after
-        a big move completes (2+ pips) when pullback is imminent.
+        For 10 pip TP target, we need to enter VERY early:
+        - Detect momentum building at 0.5-1.5 pips
+        - Check velocity (price accelerating vs previous candles)
+        - Check body/wick ratio (strong momentum = clean body, small wicks)
 
         Returns:
             (has_momentum, direction, candle_size_pips)
@@ -427,20 +429,22 @@ class ScalpingBot:
         current_price = (tick.bid + tick.ask) / 2
         pip_value = info.point * 10
 
-        # Get current forming candle AND previous candle
-        bars = self.mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 3)
-        if bars is None or len(bars) < 3:
+        # Get more candles for velocity comparison
+        bars = self.mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 5)
+        if bars is None or len(bars) < 5:
             return False, None, 0.0
 
         current_bar = bars[-1]
         prev_bar = bars[-2]
+        prev_bar2 = bars[-3]
 
         candle_open = current_bar['open']
         candle_high = current_bar['high']
         candle_low = current_bar['low']
 
-        prev_close = prev_bar['close']
         prev_range = (prev_bar['high'] - prev_bar['low']) / pip_value
+        prev_range2 = (prev_bar2['high'] - prev_bar2['low']) / pip_value
+        avg_prev_range = (prev_range + prev_range2) / 2
 
         # Calculate current candle metrics
         current_move_pips = abs(current_price - candle_open) / pip_value
@@ -456,37 +460,46 @@ class ScalpingBot:
 
         spread_pips = info.spread / 10.0
 
-        # EARLY MOMENTUM DETECTION:
-        # - Enter when move is 0.8-1.5 pips (catching early momentum)
-        # - Price should be moving AWAY from open (not retracing)
-        # - Previous candle should be smaller (this one is accelerating)
+        # VERY EARLY MOMENTUM DETECTION for 10 pip targets:
+        # Enter at 0.5-1.5 pips to catch the full move
+        min_early_momentum = 0.5 if spread_pips < 1.5 else 0.8
+        max_early_momentum = 1.5 if spread_pips < 1.5 else 2.0  # Very early!
 
-        min_early_momentum = 0.8 if spread_pips < 1.5 else 1.2
-        max_early_momentum = 2.0 if spread_pips < 1.5 else 2.5  # Don't enter late
-
-        # Check for EARLY momentum (before the big move completes)
+        # Check for EARLY momentum (at the very start of the move)
         is_early_momentum = (
             current_move_pips >= min_early_momentum and
             current_move_pips <= max_early_momentum and  # Not too late!
-            direction is not None and
-            candle_range_pips > prev_range * 0.8  # Current candle is expanding
+            direction is not None
         )
 
-        # Also check: is price at extreme of candle? (momentum still going)
+        # VELOCITY CHECK: Is this candle expanding faster than previous?
+        is_accelerating = candle_range_pips > avg_prev_range * 1.2
+
+        # BODY/WICK RATIO: Strong momentum = price at extreme (small wick)
         if direction == "BUY":
-            at_extreme = (current_price >= candle_high - (0.3 * pip_value))
+            # For bullish, price should be near high (small upper wick)
+            at_extreme = (current_price >= candle_high - (0.2 * pip_value))
+            # Body should be >70% of range
+            body_ratio = (current_price - candle_open) / max(candle_range_pips * pip_value, 0.0001)
         elif direction == "SELL":
-            at_extreme = (current_price <= candle_low + (0.3 * pip_value))
+            # For bearish, price should be near low (small lower wick)
+            at_extreme = (current_price <= candle_low + (0.2 * pip_value))
+            body_ratio = (candle_open - current_price) / max(candle_range_pips * pip_value, 0.0001)
         else:
             at_extreme = False
+            body_ratio = 0
 
-        has_momentum = is_early_momentum and at_extreme
+        strong_body = body_ratio > 0.7  # Body is 70%+ of candle
+
+        # FINAL MOMENTUM CHECK:
+        # Early move + at extreme + (accelerating OR strong body)
+        has_momentum = is_early_momentum and at_extreme and (is_accelerating or strong_body)
 
         if has_momentum:
-            LOG.info("EARLY MOMENTUM DETECTED: %s %.1f pips (range: 0.8-2.0) - catching move early!",
-                     direction, current_move_pips)
+            LOG.info("🚀 EARLY MOMENTUM: %s %.1f pips | accel=%s body=%.0f%% - CATCHING MOVE!",
+                     direction, current_move_pips, is_accelerating, body_ratio * 100)
         elif current_move_pips > max_early_momentum:
-            LOG.debug("Momentum move too late (%.1f pips > %.1f max) - waiting for pullback",
+            LOG.debug("Move too late (%.1f > %.1f max) - waiting for next setup",
                      current_move_pips, max_early_momentum)
 
         return has_momentum, direction, current_move_pips
