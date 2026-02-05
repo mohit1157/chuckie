@@ -411,12 +411,14 @@ class ScalpingBot:
 
     def _detect_momentum_candle(self, symbol: str) -> tuple:
         """
-        Detect EARLY momentum - catch moves at the VERY START before big candle forms.
+        Detect STRONG early momentum - catch big moves at the START.
 
-        For 10 pip TP target, we need to enter VERY early:
-        - Detect momentum building at 0.5-1.5 pips
-        - Check velocity (price accelerating vs previous candles)
-        - Check body/wick ratio (strong momentum = clean body, small wicks)
+        Requirements for momentum trade:
+        1. Move is 1.0-2.5 pips (not too small, not too late)
+        2. Candle is ACCELERATING (bigger than previous candles)
+        3. Strong body (80%+) - clean directional move
+        4. Price at extreme (momentum still going)
+        5. Minimum candle size (avoid tiny consolidation)
 
         Returns:
             (has_momentum, direction, candle_size_pips)
@@ -460,45 +462,48 @@ class ScalpingBot:
 
         spread_pips = info.spread / 10.0
 
-        # VERY EARLY MOMENTUM DETECTION for 10 pip targets:
-        # Enter at 0.5-1.5 pips to catch the full move
-        min_early_momentum = 0.5 if spread_pips < 1.5 else 0.8
-        max_early_momentum = 1.5 if spread_pips < 1.5 else 2.0  # Very early!
+        # MINIMUM CANDLE SIZE - avoid tiny consolidation candles
+        min_candle_range = 1.0 if spread_pips < 1.5 else 1.5  # At least 1 pip range
+        if candle_range_pips < min_candle_range:
+            LOG.debug("Candle too small (%.1f pips < %.1f min) - waiting for bigger move",
+                     candle_range_pips, min_candle_range)
+            return False, None, 0.0
 
-        # Check for EARLY momentum (at the very start of the move)
-        is_early_momentum = (
-            current_move_pips >= min_early_momentum and
-            current_move_pips <= max_early_momentum and  # Not too late!
+        # MOMENTUM RANGE: Enter at 1.0-2.5 pips (not too small, not too late)
+        min_momentum = 1.0 if spread_pips < 1.5 else 1.2
+        max_momentum = 2.5 if spread_pips < 1.5 else 3.0
+
+        # Check for momentum in valid range
+        is_valid_momentum = (
+            current_move_pips >= min_momentum and
+            current_move_pips <= max_momentum and
             direction is not None
         )
 
-        # VELOCITY CHECK: Is this candle expanding faster than previous?
-        is_accelerating = candle_range_pips > avg_prev_range * 1.2
+        # VELOCITY CHECK: Candle must be SIGNIFICANTLY bigger than previous
+        is_accelerating = candle_range_pips > avg_prev_range * 1.5  # 50% bigger
 
-        # BODY/WICK RATIO: Strong momentum = price at extreme (small wick)
+        # BODY/WICK RATIO: Strong momentum = 80%+ body
         if direction == "BUY":
-            # For bullish, price should be near high (small upper wick)
             at_extreme = (current_price >= candle_high - (0.2 * pip_value))
-            # Body should be >70% of range
             body_ratio = (current_price - candle_open) / max(candle_range_pips * pip_value, 0.0001)
         elif direction == "SELL":
-            # For bearish, price should be near low (small lower wick)
             at_extreme = (current_price <= candle_low + (0.2 * pip_value))
             body_ratio = (candle_open - current_price) / max(candle_range_pips * pip_value, 0.0001)
         else:
             at_extreme = False
             body_ratio = 0
 
-        strong_body = body_ratio > 0.7  # Body is 70%+ of candle
+        strong_body = body_ratio > 0.80  # 80%+ body required (was 70%)
 
-        # FINAL MOMENTUM CHECK:
-        # Early move + at extreme + (accelerating OR strong body)
-        has_momentum = is_early_momentum and at_extreme and (is_accelerating or strong_body)
+        # FINAL MOMENTUM CHECK - ALL conditions must be met:
+        # Valid range + at extreme + accelerating + strong body
+        has_momentum = is_valid_momentum and at_extreme and is_accelerating and strong_body
 
         if has_momentum:
-            LOG.info("🚀 EARLY MOMENTUM: %s %.1f pips | accel=%s body=%.0f%% - CATCHING MOVE!",
-                     direction, current_move_pips, is_accelerating, body_ratio * 100)
-        elif current_move_pips > max_early_momentum:
+            LOG.info("🚀 STRONG MOMENTUM: %s %.1f pips | range=%.1f | accel=%s body=%.0f%%",
+                     direction, current_move_pips, candle_range_pips, is_accelerating, body_ratio * 100)
+        elif current_move_pips > max_momentum:
             LOG.debug("Move too late (%.1f > %.1f max) - waiting for next setup",
                      current_move_pips, max_early_momentum)
 
@@ -796,16 +801,38 @@ class ScalpingBot:
                             sig = None
 
                 # If no strategy signal but strong momentum detected, create momentum signal
+                # BUT check currency bias first - don't trade against strong bias
                 if sig is None and has_momentum:
-                    sig = Signal(
-                        side=momentum_dir,
-                        reason=f"momentum_scalp|size={candle_size:.1f}pips",
-                        confidence=0.7,
-                        trade_type="momentum_scalp",
-                        size_multiplier=0.8  # Slightly smaller for pure momentum trades
-                    )
-                    LOG.info("PURE MOMENTUM TRADE: %s %s (%.1f pips move)",
-                             momentum_dir, self.cfg.symbol, candle_size)
+                    # Check if momentum direction matches currency bias
+                    currency_bias = getattr(self.strategy, '_currency_bias', None)
+                    bias_strength = getattr(self.strategy, '_bias_strength', 0)
+
+                    # Block if momentum goes AGAINST strong currency bias
+                    if currency_bias and bias_strength >= 5.0:
+                        if (momentum_dir == "BUY" and currency_bias == "SELL") or \
+                           (momentum_dir == "SELL" and currency_bias == "BUY"):
+                            LOG.info("MOMENTUM BLOCKED: %s conflicts with currency bias %s (%.1f)",
+                                    momentum_dir, currency_bias, bias_strength)
+                            has_momentum = False
+
+                    # Also add momentum trade cooldown (5 seconds between momentum trades)
+                    if has_momentum:
+                        last_momentum = getattr(self, '_last_momentum_trade', 0)
+                        if time.time() - last_momentum < 5:  # 5 second cooldown
+                            LOG.debug("Momentum cooldown active - skipping")
+                            has_momentum = False
+
+                    if has_momentum:
+                        sig = Signal(
+                            side=momentum_dir,
+                            reason=f"momentum_scalp|size={candle_size:.1f}pips",
+                            confidence=0.7,
+                            trade_type="momentum_scalp",
+                            size_multiplier=0.8
+                        )
+                        self._last_momentum_trade = time.time()  # Record trade time
+                        LOG.info("PURE MOMENTUM TRADE: %s %s (%.1f pips move)",
+                                 momentum_dir, self.cfg.symbol, candle_size)
 
                 if sig is not None:
                     # Use dynamic SL/TP based on spread
